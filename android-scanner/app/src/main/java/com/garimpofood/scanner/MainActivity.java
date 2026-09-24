@@ -35,6 +35,8 @@ public class MainActivity extends Activity {
             "https://sage-starlight-0f4485.netlify.app/.netlify/functions/ingest99";
     private static final String GARIMPO_URL =
             "https://sage-starlight-0f4485.netlify.app";
+    private static final String DEALS_URL =
+            "https://sage-starlight-0f4485.netlify.app/.netlify/functions/deals99";
     private static final String CITY_URL =
             "https://99app.com/99food/sao-paulo/";
 
@@ -126,6 +128,11 @@ public class MainActivity extends Activity {
                     return;
                 }
 
+                if (url != null && url.startsWith("https://garimpo.local/")) {
+                    status.setText("Ofertas Garimpo carregadas.");
+                    return;
+                }
+
                 if (!autoMode && pendingOfferName != null && pendingOfferUrl != null &&
                         url != null && url.contains("99app.com/99food/")) {
                     status.setText("Localizando oferta: " + pendingOfferName);
@@ -152,7 +159,7 @@ public class MainActivity extends Activity {
         });
 
         garimpoButton.setOnClickListener(v -> {
-            if (!autoMode) webView.loadUrl(GARIMPO_URL);
+            if (!autoMode) loadGarimpoFeed();
         });
 
         autoScanButton.setOnClickListener(v -> {
@@ -236,6 +243,170 @@ public class MainActivity extends Activity {
         super.onNewIntent(intent);
         setIntent(intent);
         handleIncomingOffer(intent);
+    }
+
+    private String htmlEscape(String value) {
+        if (value == null) return "";
+        return value.replace("&", "&amp;")
+                .replace("<", "&lt;")
+                .replace(">", "&gt;")
+                .replace("\"", "&quot;")
+                .replace("'", "&#39;");
+    }
+
+    private boolean looksLikeAddonLocal(String product) {
+        if (product == null) return true;
+        String p = product.toLowerCase();
+        if (p.matches("^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$")) {
+            return true;
+        }
+        return p.matches(".*\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\\b.*");
+    }
+
+    private String money(double value) {
+        return String.format(new java.util.Locale("pt", "BR"), "R$ %.2f", value)
+                .replace(".", ",");
+    }
+
+    private void loadGarimpoFeed() {
+        status.setText("Carregando ofertas Garimpo...");
+
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                URL url = new URL(DEALS_URL + "?t=" + System.currentTimeMillis());
+                connection = (HttpURLConnection) url.openConnection();
+                connection.setRequestMethod("GET");
+                connection.setConnectTimeout(10000);
+                connection.setReadTimeout(15000);
+                connection.setRequestProperty("Accept", "application/json");
+
+                int code = connection.getResponseCode();
+                String body = readResponse(
+                        code >= 200 && code < 400
+                                ? connection.getInputStream()
+                                : connection.getErrorStream()
+                );
+
+                if (code < 200 || code >= 300) {
+                    throw new Exception("HTTP " + code);
+                }
+
+                JSONObject json = new JSONObject(body);
+                JSONArray deals = json.optJSONArray("deals");
+
+                StringBuilder cards = new StringBuilder();
+                int shown = 0;
+
+                if (deals != null) {
+                    for (int i = 0; i < deals.length() && shown < 100; i++) {
+                        JSONObject d = deals.optJSONObject(i);
+                        if (d == null) continue;
+
+                        String product = d.optString("product", "").trim();
+                        if (product.isEmpty() || looksLikeAddonLocal(product)) continue;
+
+                        double price = d.optDouble("price", 0);
+                        if (!(price > 0)) continue;
+
+                        String restaurant = d.optString("restaurant", "99Food");
+                        String restaurantUrl = d.optString("offerUrl",
+                                d.optString("url", ""));
+                        String classification = d.optString("classification", "");
+                        int score = d.optInt("score", 0);
+                        boolean verified = d.optBoolean("verifiedDiscount", false);
+                        double reference = d.optDouble("referencePrice", 0);
+                        double discount = d.optDouble("discount", 0);
+
+                        String label;
+                        if ("verified_extreme".equals(classification)) {
+                            label = "Desconto extremo verificado";
+                        } else if ("verified_discount".equals(classification)) {
+                            label = "Desconto verificado";
+                        } else if ("extreme_price".equals(classification)) {
+                            label = "Preço extremo";
+                        } else if ("very_low_price".equals(classification)) {
+                            label = "Preço muito baixo";
+                        } else {
+                            label = "Oferta detectada";
+                        }
+
+                        String detail;
+                        if (verified && reference > price) {
+                            detail = "De " + money(reference) + " por " + money(price) +
+                                    " — " + Math.round(discount) + "% de desconto";
+                        } else {
+                            detail = "Preço atual " + money(price) +
+                                    " — preço anterior não disponível";
+                        }
+
+                        Uri deepLink = new Uri.Builder()
+                                .scheme("garimpo")
+                                .authority("offer")
+                                .appendQueryParameter("url", restaurantUrl)
+                                .appendQueryParameter("product", product)
+                                .build();
+
+                        cards.append("<article class='card'>")
+                                .append("<div class='top'><b>")
+                                .append(htmlEscape(label))
+                                .append("</b><span>Score ")
+                                .append(score)
+                                .append("/100</span></div>")
+                                .append("<h2>")
+                                .append(htmlEscape(product))
+                                .append("</h2>")
+                                .append("<p class='restaurant'>")
+                                .append(htmlEscape(restaurant))
+                                .append("</p>")
+                                .append("<div class='price'>")
+                                .append(htmlEscape(money(price)))
+                                .append("</div>")
+                                .append("<p class='detail'>")
+                                .append(htmlEscape(detail))
+                                .append("</p>")
+                                .append("<a href='")
+                                .append(htmlEscape(deepLink.toString()))
+                                .append("'>Ver oferta</a>")
+                                .append("</article>");
+
+                        shown++;
+                    }
+                }
+
+                String empty = shown == 0
+                        ? "<div class='empty'>Nenhuma oferta válida encontrada.</div>"
+                        : "";
+
+                String html = "<!doctype html><html><head>" +
+                        "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                        "<style>" +
+                        "body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:16px}" +
+                        "header{margin-bottom:16px}small{color:#666}.card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}" +
+                        ".top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666}" +
+                        "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:28px;font-weight:800}" +
+                        ".detail{font-size:14px;font-weight:700}.card a{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
+                        ".empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
+                        "</style></head><body><header><small>GARIMPO FOOD</small><h1>Ofertas encontradas</h1></header>" +
+                        cards + empty + "</body></html>";
+
+                runOnUiThread(() -> {
+                    webView.loadDataWithBaseURL(
+                            "https://garimpo.local/",
+                            html,
+                            "text/html",
+                            "UTF-8",
+                            null
+                    );
+                });
+            } catch (Exception e) {
+                runOnUiThread(() ->
+                        status.setText("Falha ao carregar Garimpo: " + e.getMessage())
+                );
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
     }
 
     private boolean isCityPage(String url) {
