@@ -194,11 +194,31 @@ public class MainActivity extends Activity {
             return false;
         }
 
+        if (openOfferIn99App(url, product.trim())) {
+            return true;
+        }
+
         pendingOfferName = product.trim();
         pendingOfferUrl = url;
-        status.setText("Abrindo oferta: " + pendingOfferName);
+        status.setText("App 99 não abriu o link. Usando visualização interna...");
         webView.loadUrl(url);
         return true;
+    }
+
+    private boolean openOfferIn99App(String url, String product) {
+        try {
+            Intent intent99 = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            intent99.setPackage("com.taxis99");
+            intent99.addCategory(Intent.CATEGORY_BROWSABLE);
+            intent99.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
+            startActivity(intent99);
+            pendingOfferName = null;
+            pendingOfferUrl = null;
+            status.setText("Abrindo " + product + " no app 99...");
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
     }
 
     private void locatePendingOffer() {
