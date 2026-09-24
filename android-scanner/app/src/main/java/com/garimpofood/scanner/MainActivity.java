@@ -14,6 +14,9 @@ import android.widget.TextView;
 import org.json.JSONArray;
 import org.json.JSONObject;
 
+import java.io.BufferedReader;
+import java.io.InputStream;
+import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
@@ -56,7 +59,7 @@ public class MainActivity extends Activity {
             @Override
             public void onPageFinished(WebView view, String url) {
                 urlInput.setText(url);
-                status.setText("Página carregada. Toque em Escanear página.");
+                status.setText("Página carregada. Role o menu e toque em Escanear página.");
             }
         });
 
@@ -80,49 +83,166 @@ public class MainActivity extends Activity {
             return;
         }
 
-        status.setText("Lendo produtos e preços visíveis...");
+        status.setText("Lendo nomes, preços e promoções visíveis...");
 
         String script = """
             (function() {
               const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
               const priceRe = /R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})/g;
-              const toNumber = s => Number(s.replace(/\\./g,'').replace(',','.'));
-              const items = [];
-              const seen = new Set();
+              const onePriceRe = /R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})/;
+              const toNumber = s => Number(s.replace(/\\./g, '').replace(',', '.'));
+              const allPrices = text => Array.from((text || '').matchAll(priceRe))
+                .map(m => toNumber(m[1]))
+                .filter(n => Number.isFinite(n) && n > 0 && n < 1000);
 
-              const candidates = Array.from(document.querySelectorAll('body *')).filter(el => {
+              const badName = /^(adicionar|escolher|ver mais|a partir de|indispon[ií]vel|novo|promo[cç][aã]o)$/i;
+              const addon = /\\b(molho|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra)\\b/i;
+
+              function isVisible(el) {
+                if (!el || !el.getBoundingClientRect) return false;
+                const r = el.getBoundingClientRect();
+                const style = getComputedStyle(el);
+                return r.width > 0 && r.height > 0 && style.display !== 'none' && style.visibility !== 'hidden';
+              }
+
+              function textLines(el) {
+                return (el?.innerText || '')
+                  .split(/\\n+/)
+                  .map(clean)
+                  .filter(Boolean);
+              }
+
+              function nameFromCard(card) {
+                const preferred = Array.from(card.querySelectorAll(
+                  'h2,h3,h4,h5,[class*="title"],[class*="name"],[data-testid*="name"],[data-testid*="title"]'
+                )).filter(isVisible);
+
+                for (const el of preferred) {
+                  const t = clean(el.innerText);
+                  if (!t || t.length < 2 || t.length > 110 || t.includes('R$') || badName.test(t)) continue;
+                  return t;
+                }
+
+                const lines = textLines(card);
+                for (const line of lines) {
+                  if (line.includes('R$')) continue;
+                  if (line.length < 2 || line.length > 110 || badName.test(line)) continue;
+                  if (/^\\d+[xX]?$/.test(line)) continue;
+                  return line;
+                }
+                return '';
+              }
+
+              function findCard(priceEl) {
+                let node = priceEl;
+                let fallback = priceEl.parentElement;
+                for (let depth = 0; depth < 7 && node; depth++, node = node.parentElement) {
+                  const text = clean(node.innerText);
+                  if (!text || text.length > 900) continue;
+                  const prices = allPrices(text);
+                  const name = nameFromCard(node);
+                  if (name && prices.length >= 1) {
+                    fallback = node;
+                    const interactive = node.matches('li,article,a,button,[role="button"]') ||
+                      !!node.querySelector('img');
+                    if (interactive && text.length < 650) return node;
+                  }
+                }
+                return fallback;
+              }
+
+              function originalPriceFromCard(card, promoPrice) {
+                let explicit = null;
+
+                for (const el of Array.from(card.querySelectorAll('*'))) {
+                  const txt = clean(el.innerText);
+                  const m = txt.match(onePriceRe);
+                  if (!m) continue;
+                  const n = toNumber(m[1]);
+                  if (!(n > promoPrice)) continue;
+
+                  const style = getComputedStyle(el);
+                  const line = (style.textDecorationLine || '') + ' ' + (style.textDecoration || '');
+                  const cls = String(el.className || '');
+                  if (/line-through/i.test(line) || /old|original|from|de-price|list-price|strike/i.test(cls)) {
+                    explicit = Math.max(explicit || 0, n);
+                  }
+                }
+
+                if (explicit) return explicit;
+
+                const prices = allPrices(card.innerText);
+                const higher = prices.filter(n => n > promoPrice * 1.03);
+                if (higher.length >= 1 && prices.length <= 4) {
+                  const max = Math.max(...higher);
+                  const text = clean(card.innerText);
+                  if (/\\b(de|por|off|desconto|promo[cç][aã]o)\\b/i.test(text) || max >= promoPrice * 1.15) {
+                    return max;
+                  }
+                }
+                return null;
+              }
+
+              const priceElements = Array.from(document.querySelectorAll('body *')).filter(el => {
+                if (!isVisible(el)) return false;
                 const own = clean(Array.from(el.childNodes)
                   .filter(n => n.nodeType === 3)
                   .map(n => n.textContent)
                   .join(' '));
-                return own.includes('R$') && own.length < 220;
+                return onePriceRe.test(own) && own.length <= 80;
               });
 
-              for (const el of candidates) {
-                let node = el;
-                for (let depth = 0; depth < 5 && node; depth++, node = node.parentElement) {
-                  const text = clean(node.innerText);
-                  if (text.length < 5 || text.length > 500) continue;
+              const byKey = new Map();
 
-                  const matches = Array.from(text.matchAll(priceRe));
-                  if (!matches.length) continue;
-                  const prices = matches.map(m => toNumber(m[1])).filter(n => n > 0 && n < 1000);
-                  if (!prices.length) continue;
+              for (const priceEl of priceElements) {
+                const own = clean(priceEl.innerText);
+                const ownMatch = own.match(onePriceRe);
+                if (!ownMatch) continue;
+                const ownPrice = toNumber(ownMatch[1]);
+                if (!(ownPrice > 0 && ownPrice < 1000)) continue;
 
-                  const price = Math.min(...prices);
-                  const withoutPrices = clean(text.replace(/R\\$\\s*[0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2}/g, ' '));
-                  const parts = withoutPrices.split(/\\n|  +/).map(clean).filter(Boolean);
-                  let product = parts[0] || withoutPrices;
-                  if (product.length > 160) product = product.slice(0, 160);
-                  if (!product || product.length < 2) continue;
+                const card = findCard(priceEl);
+                if (!card) continue;
 
-                  const key = product.toLowerCase() + '|' + price;
-                  if (seen.has(key)) break;
-                  seen.add(key);
-                  items.push({ product, price });
-                  break;
+                const product = nameFromCard(card);
+                if (!product || product.length < 2) continue;
+
+                const prices = allPrices(card.innerText);
+                if (!prices.length) continue;
+
+                const promoPrice = Math.min(...prices);
+                const originalPrice = originalPriceFromCard(card, promoPrice);
+                const normalized = product
+                  .toLowerCase()
+                  .normalize('NFD')
+                  .replace(/[\\u0300-\\u036f]/g, '')
+                  .replace(/[^a-z0-9]+/g, ' ')
+                  .trim();
+
+                if (!normalized || addon.test(product)) continue;
+
+                const item = {
+                  product,
+                  price: promoPrice,
+                  originalPrice: originalPrice,
+                  hasDisplayedDiscount: !!(originalPrice && originalPrice > promoPrice),
+                  sourceText: clean(card.innerText).slice(0, 260)
+                };
+
+                const old = byKey.get(normalized);
+                if (!old || item.price < old.price ||
+                    (!!item.originalPrice && !old.originalPrice)) {
+                  byKey.set(normalized, item);
                 }
               }
+
+              const items = Array.from(byKey.values())
+                .sort((a, b) => {
+                  const da = a.originalPrice ? (a.originalPrice - a.price) / a.originalPrice : 0;
+                  const db = b.originalPrice ? (b.originalPrice - b.price) / b.originalPrice : 0;
+                  return db - da || a.price - b.price;
+                })
+                .slice(0, 80);
 
               const restaurant =
                 clean(document.querySelector('h1')?.innerText) ||
@@ -131,10 +251,11 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.report(JSON.stringify({
+                scannerVersion: 2,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
-                items: items.slice(0, 60)
+                items
               }));
             })();
             """;
@@ -150,6 +271,19 @@ public class MainActivity extends Activity {
         }
     }
 
+    private String readResponse(InputStream input) {
+        if (input == null) return "";
+        try {
+            BufferedReader reader = new BufferedReader(new InputStreamReader(input, StandardCharsets.UTF_8));
+            StringBuilder out = new StringBuilder();
+            String line;
+            while ((line = reader.readLine()) != null) out.append(line);
+            return out.toString();
+        } catch (Exception ignored) {
+            return "";
+        }
+    }
+
     private void upload(String payload) {
         HttpURLConnection connection = null;
         try {
@@ -159,7 +293,7 @@ public class MainActivity extends Activity {
 
             if (count == 0) {
                 runOnUiThread(() -> status.setText(
-                        "Nenhum preço foi encontrado nesta página. Role o menu e tente novamente."
+                        "Nenhum produto válido foi encontrado. Role o menu e tente novamente."
                 ));
                 return;
             }
@@ -172,20 +306,38 @@ public class MainActivity extends Activity {
             connection.setReadTimeout(15000);
             connection.setDoOutput(true);
             connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
-            connection.setRequestProperty("X-Garimpo-Client", "android-scanner-v1");
+            connection.setRequestProperty("X-Garimpo-Client", "android-scanner-v2");
 
             try (OutputStream out = connection.getOutputStream()) {
                 out.write(body);
             }
 
             int code = connection.getResponseCode();
+            String responseBody = readResponse(
+                    code >= 200 && code < 400 ? connection.getInputStream() : connection.getErrorStream()
+            );
+
             if (code >= 200 && code < 300) {
+                int accepted = count;
+                int directDiscounts = 0;
+                try {
+                    JSONObject response = new JSONObject(responseBody);
+                    accepted = response.optInt("accepted", count);
+                    directDiscounts = response.optInt("displayedDiscounts", 0);
+                } catch (Exception ignored) {}
+
+                final int acceptedFinal = accepted;
+                final int discountsFinal = directDiscounts;
                 runOnUiThread(() -> status.setText(
-                        count + " itens enviados. Agora toque em Ver Garimpo."
+                        acceptedFinal + " produtos enviados. " +
+                        discountsFinal + " promoções com preço anterior detectadas."
                 ));
             } else {
+                final String detail = responseBody.length() > 180
+                        ? responseBody.substring(0, 180)
+                        : responseBody;
                 runOnUiThread(() -> status.setText(
-                        "O servidor Garimpo respondeu HTTP " + code + "."
+                        "Garimpo respondeu HTTP " + code + ". " + detail
                 ));
             }
         } catch (Exception e) {
