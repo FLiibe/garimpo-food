@@ -3,7 +3,7 @@
 
     <application
         android:allowBackup="false"
-        android:label="Garimpo Scanner"
+        android:label="Garimpo 9,99"
         android:usesCleartextTraffic="false"
         android:theme="@android:style/Theme.Material.Light.NoActionBar">
         <activity
