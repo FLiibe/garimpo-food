@@ -2,8 +2,16 @@ import * as cheerio from "cheerio";
 
 const CITY_URL = "https://99app.com/99food/sao-paulo/";
 const MAX_RESTAURANTS = 4;
+const SEED_RESTAURANTS = [
+  ["https://99app.com/99food/sao-paulo/zero-onze-marmitex/5764608153342447373/", "Zero Onze - Marmitex"],
+  ["https://99app.com/99food/sao-paulo/dogao-do-renzo-guarulhos/5764608346716639001/", "Dogão do Renzo - Guarulhos"],
+  ["https://99app.com/99food/sao-paulo/mr-smash-hamburguer-milkshake-fritas-e-combos/5764608256648154895/", "Mr. Smash"],
+  ["https://99app.com/99food/sao-paulo/pizza-mia-vila-galvao-rodizio/5764608076062396164/", "Pizza Mia - Vila Galvão"]
+];
 
-async function fetchHtml(url, timeoutMs = 7000) {
+const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
+
+async function fetchHtml(url, timeoutMs = 8000) {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), timeoutMs);
   try {
@@ -11,10 +19,10 @@ async function fetchHtml(url, timeoutMs = 7000) {
       signal: controller.signal,
       redirect: "follow",
       headers: {
-        "user-agent": "Mozilla/5.0 (Linux; Android 16) AppleWebKit/537.36 Chrome/140.0 Mobile Safari/537.36",
-        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "accept-language": "pt-BR,pt;q=0.9,en;q=0.7",
-        "cache-control": "no-cache"
+        "user-agent": "Mozilla/5.0 (Linux; Android 16; SM-A536B) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/140.0.0.0 Mobile Safari/537.36",
+        "accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "accept-language": "pt-BR,pt;q=0.9,en-US;q=0.7,en;q=0.6",
+        "referer": "https://99app.com/99food/sao-paulo/"
       }
     });
     const text = await response.text();
@@ -99,54 +107,70 @@ export default async () => {
   const scannedAt = new Date().toISOString();
 
   try {
+    let restaurants = [];
+    let discoveryMode = "city";
+    let cityStatus = null;
+
     const city = await fetchHtml(CITY_URL);
+    cityStatus = city.status;
 
-    if (!city.ok) {
-      return Response.json({
-        ok: false,
-        stage: "city-fetch",
-        error: `99Food respondeu HTTP ${city.status}`,
-        contentType: city.contentType,
-        preview: city.text.slice(0, 180),
-        deals: [],
-        scannedAt
-      });
+    if (city.ok) {
+      restaurants = restaurantLinks(city.text);
     }
-
-    const restaurants = restaurantLinks(city.text);
 
     if (!restaurants.length) {
-      return Response.json({
-        ok: false,
-        stage: "restaurant-discovery",
-        error: "A página abriu, mas nenhum restaurante foi encontrado no HTML.",
-        cityBytes: city.text.length,
-        cityTitle: cheerio.load(city.text)("title").text().trim().slice(0, 120),
-        deals: [],
-        scannedAt
-      });
+      restaurants = SEED_RESTAURANTS;
+      discoveryMode = city.status === 429 ? "seed-fallback-after-429" : "seed-fallback";
     }
 
-    const results = await Promise.allSettled(
-      restaurants.map(async ([url, name]) => {
-        const page = await fetchHtml(url, 6000);
-        if (!page.ok) throw new Error(`HTTP ${page.status}`);
-        return extractProducts(page.text, url, name);
-      })
-    );
+    const deals = [];
+    const failures = [];
 
-    const deals = results.flatMap(r => r.status === "fulfilled" ? r.value : []);
-    const failures = results.filter(r => r.status === "rejected").map(r => String(r.reason));
+    for (const [url, name] of restaurants.slice(0, MAX_RESTAURANTS)) {
+      try {
+        const page = await fetchHtml(url, 8000);
+        if (!page.ok) {
+          failures.push({ restaurant: name, status: page.status });
+        } else {
+          deals.push(...extractProducts(page.text, url, name));
+        }
+      } catch (error) {
+        failures.push({
+          restaurant: name,
+          error: error?.name === "AbortError" ? "timeout" : String(error)
+        });
+      }
+      await wait(900);
+    }
+
+    if (!deals.length) {
+      return Response.json({
+        ok: false,
+        stage: "restaurant-fetch",
+        error: "Nenhum menu pôde ser lido a partir do servidor Netlify.",
+        discoveryMode,
+        cityStatus,
+        failures,
+        deals: [],
+        scannedAt
+      }, {
+        headers: { "cache-control": "public, max-age=60, s-maxage=300" }
+      });
+    }
 
     return Response.json({
       ok: true,
       stage: "complete",
+      discoveryMode,
+      cityStatus,
       restaurantsFound: restaurants.length,
-      restaurantsParsed: results.length - failures.length,
+      restaurantsParsed: restaurants.length - failures.length,
       failures,
       deals: deals.sort((a,b) => b.score-a.score || a.price-b.price).slice(0,120),
       scannedAt
-    }, { headers: { "cache-control": "no-store" } });
+    }, {
+      headers: { "cache-control": "public, max-age=60, s-maxage=300" }
+    });
 
   } catch (error) {
     return Response.json({
@@ -155,6 +179,8 @@ export default async () => {
       error: error?.name === "AbortError" ? "Timeout ao acessar 99Food" : String(error),
       deals: [],
       scannedAt
+    }, {
+      headers: { "cache-control": "no-store" }
     });
   }
 };
