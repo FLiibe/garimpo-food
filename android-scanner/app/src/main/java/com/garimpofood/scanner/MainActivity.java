@@ -670,7 +670,6 @@ public class MainActivity extends Activity {
                 const item = {
                   product,
                   price: promoPrice,
-                  sourceText,
                   offerUrl
                 };
 
@@ -691,7 +690,7 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.__CALL__(JSON.stringify({
-                scannerVersion: 6,
+                scannerVersion: 61,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
