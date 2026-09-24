@@ -28,7 +28,7 @@
         android:id="@+id/autoScanButton"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Escanear São Paulo — 20 restaurantes"
+        android:text="Escanear rápido — 12 restaurantes"
         android:textAllCaps="false" />
 
     <EditText
