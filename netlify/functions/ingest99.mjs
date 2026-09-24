@@ -30,8 +30,10 @@ function productKey(name) {
     .trim();
 }
 
-function looksLikeAddon(name) {
-  return /\b(molho|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra)\b/i.test(name);
+function looksLikeAddon(name, sourceText = "") {
+  const haystack = `${name || ""} ${sourceText || ""}`;
+  if (/^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$/i.test(String(name || "").trim())) return true;
+  return /\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\b/i.test(haystack);
 }
 
 function scoreItem(item, referencePrice, referenceSource) {
@@ -92,14 +94,24 @@ export default async (req) => {
       const price = numberOrNull(x.price);
       const originalPriceRaw = numberOrNull(x.originalPrice);
       const originalPrice = originalPriceRaw && originalPriceRaw > price ? originalPriceRaw : null;
+      const sourceText = cleanText(x.sourceText, 320);
+      let offerUrl = cleanText(x.offerUrl, 500) || null;
+      if (offerUrl) {
+        try {
+          const u = new URL(offerUrl);
+          if (!ALLOWED_HOSTS.has(u.hostname) || !u.pathname.includes("/99food/")) offerUrl = null;
+        } catch { offerUrl = null; }
+      }
 
-      if (!product || !price || looksLikeAddon(product)) continue;
+      if (!product || !price || looksLikeAddon(product, sourceText)) continue;
 
       const normalized = {
         product,
         price,
         originalPrice,
         hasDisplayedDiscount: Boolean(originalPrice),
+        sourceText,
+        offerUrl,
         url: sourceUrl,
         restaurant
       };
