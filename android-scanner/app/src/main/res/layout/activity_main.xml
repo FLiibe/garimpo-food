@@ -18,11 +18,18 @@
         android:id="@+id/status"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:text="Abra um restaurante 99Food e toque em Escanear página."
+        android:text="Use Escanear São Paulo para iniciar o radar automático."
         android:textSize="13sp"
         android:textColor="#666666"
         android:paddingTop="4dp"
         android:paddingBottom="8dp" />
+
+    <Button
+        android:id="@+id/autoScanButton"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Escanear São Paulo — 20 restaurantes"
+        android:textAllCaps="false" />
 
     <EditText
         android:id="@+id/urlInput"
@@ -31,7 +38,8 @@
         android:singleLine="true"
         android:textSize="12sp"
         android:inputType="textUri"
-        android:text="https://99app.com/99food/sao-paulo/nosso-pastel-jardim-colonia/5764608520268546182/" />
+        android:text="https://99app.com/99food/sao-paulo/nosso-pastel-jardim-colonia/5764608520268546182/"
+        android:layout_marginTop="6dp" />
 
     <LinearLayout
         android:layout_width="match_parent"
@@ -45,21 +53,24 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Abrir" />
+            android:text="Abrir"
+            android:textAllCaps="false" />
 
         <Button
             android:id="@+id/scanButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Escanear página" />
+            android:text="Escanear página"
+            android:textAllCaps="false" />
 
         <Button
             android:id="@+id/garimpoButton"
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Ver Garimpo" />
+            android:text="Ver Garimpo"
+            android:textAllCaps="false" />
     </LinearLayout>
 
     <WebView
