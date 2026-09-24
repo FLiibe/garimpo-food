@@ -19,10 +19,17 @@
     </header>
 
     <section class="controls">
-      <div class="tabs">
+      <div class="tabs price-tabs">
         <button class="tab" data-filter="under1">Até R$0,99</button>
         <button class="tab" data-filter="under5">Até R$4,99</button>
         <button class="tab active" data-filter="under999">Até R$9,99</button>
+      </div>
+      <div class="tabs category-tabs">
+        <button class="tab active" data-category="Todos">Todos</button>
+        <button class="tab" data-category="Refeições">Refeições</button>
+        <button class="tab" data-category="Lanches">Lanches</button>
+        <button class="tab" data-category="Carnes">Carnes</button>
+        <button class="tab" data-category="Pizza/Pastel">Pizza/Pastel</button>
       </div>
       <input id="searchInput" type="search" placeholder="Buscar combo, frango, burger, pastel...">
     </section>
@@ -46,14 +53,13 @@
       </div>
       <h2 class="product"></h2>
       <div class="restaurant"></div>
-      <div class="price-row">
-        <strong class="price"></strong>
-      </div>
+      <div class="price-row"><strong class="price"></strong></div>
       <div class="discount"></div>
       <a class="open-link">Ver oferta</a>
+      <button class="report-link" type="button">Não encontrei esta oferta</button>
     </article>
   </template>
 
-  <script src="/app.js?v=6" defer></script>
+  <script src="/app.js?v=7" defer></script>
 </body>
 </html>
