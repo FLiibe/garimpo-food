@@ -49,3 +49,5 @@ Molte pagine mostrano soltanto il prezzo corrente. Il sistema salva le osservazi
 4. Inserire quartiere/CEP.
 5. Aggiungere alert.
 6. Integrare iFood con un approccio separato.
+
+<!-- redeploy trigger after scanner diagnostics fix -->
