@@ -1,0 +1,17 @@
+{
+  "name": "garimpo-food-mobile-v1",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "netlify dev",
+    "build": "echo 'Static PWA: no build step'"
+  },
+  "dependencies": {
+    "@netlify/blobs": "^9.1.2",
+    "cheerio": "^1.1.2"
+  },
+  "devDependencies": {
+    "netlify-cli": "^23.5.0"
+  }
+}
