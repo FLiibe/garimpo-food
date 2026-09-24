@@ -902,9 +902,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     if (result.success) {
                         status.setText(
-                                result.accepted + " achados enviados. " +
-                                result.displayedDiscounts +
-                                " itens até R$9,99 detectados."
+                                result.accepted + " achados até R$9,99 enviados."
                         );
                     } else {
                         status.setText("Falha no envio: " + result.error);
