@@ -41,8 +41,8 @@ public class MainActivity extends Activity {
             "https://99app.com/99food/sao-paulo/";
 
     private static final int AUTO_MAX_RESTAURANTS = 12;
-    private static final long AUTO_DELAY_MS = 1400;
-    private static final long PAGE_SETTLE_MS = 900;
+    private static final long AUTO_DELAY_MS = 700;
+    private static final long PAGE_SETTLE_MS = 650;
 
     private WebView webView;
     private EditText urlInput;
@@ -129,7 +129,7 @@ public class MainActivity extends Activity {
                 }
 
                 if (url != null && url.startsWith("https://garimpo.local/")) {
-                    status.setText("Ofertas Garimpo carregadas.");
+                    status.setText("Garimpo 9,99 carregado.");
                     return;
                 }
 
@@ -141,7 +141,7 @@ public class MainActivity extends Activity {
                 }
 
                 if (!autoMode) {
-                    status.setText("Página carregada. Role o menu e toque em Escanear página.");
+                    status.setText("Página carregada. Procure itens por até R$9,99.");
                 }
             }
         });
@@ -254,13 +254,26 @@ public class MainActivity extends Activity {
                 .replace("'", "&#39;");
     }
 
-    private boolean looksLikeAddonLocal(String product) {
-        if (product == null) return true;
-        String p = product.toLowerCase();
-        if (p.matches("^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$")) {
-            return true;
-        }
-        return p.matches(".*\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\\b.*");
+    private boolean isEligibleFoodLocal(String product, double price) {
+        if (product == null || product.trim().isEmpty()) return false;
+        if (!(price > 0 && price <= 9.99)) return false;
+
+        String p = product.toLowerCase(new java.util.Locale("pt", "BR"));
+
+        boolean blocked = p.matches(
+                ".*\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|" +
+                "hashi|talher|guardanapo|embalagem|sach[eê]|adicional|adicionais|" +
+                "borda|extra|condimento|dip|acompanhamento|acompanhamentos)\\b.*"
+        );
+        if (blocked) return false;
+
+        return p.matches(
+                ".*\\b(combo|marmita|prato|refei[cç][aã]o|hamb[uú]rguer|hamburguer|" +
+                "burger|sandu[ií]che|lanche|chicken|whopper|frango|lingui[cç]a|carne|" +
+                "bife|costela|calabresa|pizza|pastel|esfiha|coxinha|hot[ -]?dog|" +
+                "cachorro[ -]?quente|yakisoba|sushi|temaki|poke|tapioca|" +
+                "cheeseburger|x[ -]?(burger|salada|bacon|frango))\\b.*"
+        );
     }
 
     private String money(double value) {
@@ -269,7 +282,7 @@ public class MainActivity extends Activity {
     }
 
     private void loadGarimpoFeed() {
-        status.setText("Carregando ofertas Garimpo...");
+        status.setText("Carregando achados até R$9,99...");
 
         new Thread(() -> {
             HttpURLConnection connection = null;
@@ -304,41 +317,15 @@ public class MainActivity extends Activity {
                         if (d == null) continue;
 
                         String product = d.optString("product", "").trim();
-                        if (product.isEmpty() || looksLikeAddonLocal(product)) continue;
-
                         double price = d.optDouble("price", 0);
-                        if (!(price > 0)) continue;
+                        if (!isEligibleFoodLocal(product, price)) continue;
 
                         String restaurant = d.optString("restaurant", "99Food");
                         String restaurantUrl = d.optString("offerUrl",
                                 d.optString("url", ""));
-                        String classification = d.optString("classification", "");
-                        int score = d.optInt("score", 0);
-                        boolean verified = d.optBoolean("verifiedDiscount", false);
-                        double reference = d.optDouble("referencePrice", 0);
-                        double discount = d.optDouble("discount", 0);
 
-                        String label;
-                        if ("verified_extreme".equals(classification)) {
-                            label = "Desconto extremo verificado";
-                        } else if ("verified_discount".equals(classification)) {
-                            label = "Desconto verificado";
-                        } else if ("extreme_price".equals(classification)) {
-                            label = "Preço extremo";
-                        } else if ("very_low_price".equals(classification)) {
-                            label = "Preço muito baixo";
-                        } else {
-                            label = "Oferta detectada";
-                        }
-
-                        String detail;
-                        if (verified && reference > price) {
-                            detail = "De " + money(reference) + " por " + money(price) +
-                                    " — " + Math.round(discount) + "% de desconto";
-                        } else {
-                            detail = "Preço atual " + money(price) +
-                                    " — preço anterior não disponível";
-                        }
+                        String label = "ATÉ R$9,99";
+                        String detail = "Preço encontrado agora";
 
                         Uri deepLink = new Uri.Builder()
                                 .scheme("garimpo")
@@ -350,9 +337,9 @@ public class MainActivity extends Activity {
                         cards.append("<article class='card'>")
                                 .append("<div class='top'><b>")
                                 .append(htmlEscape(label))
-                                .append("</b><span>Score ")
-                                .append(score)
-                                .append("/100</span></div>")
+                                .append("</b><span>")
+                                .append(htmlEscape(money(price)))
+                                .append("</span></div>")
                                 .append("<h2>")
                                 .append(htmlEscape(product))
                                 .append("</h2>")
@@ -382,12 +369,12 @@ public class MainActivity extends Activity {
                         "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
                         "<style>" +
                         "body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:16px}" +
-                        "header{margin-bottom:16px}small{color:#666}.card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}" +
+                        "header{margin-bottom:16px}small{color:#666}.subtitle{color:#555;margin-top:-8px}.card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}" +
                         ".top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666}" +
                         "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:28px;font-weight:800}" +
                         ".detail{font-size:14px;font-weight:700}.card a{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
                         ".empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
-                        "</style></head><body><header><small>GARIMPO FOOD</small><h1>Ofertas encontradas</h1></header>" +
+                        "</style></head><body><header><small>GARIMPO 9,99</small><h1>Comida de verdade por até R$9,99</h1><p class='subtitle'>Preço atual encontrado no 99Food. Sem depender de preço anterior.</p></header>" +
                         cards + empty + "</body></html>";
 
                 runOnUiThread(() -> {
@@ -557,8 +544,8 @@ public class MainActivity extends Activity {
                 .filter(n => Number.isFinite(n) && n > 0 && n < 1000);
 
               const badName = /^(adicionar|escolher|ver mais|a partir de|indispon[ií]vel|novo|promo[cç][aã]o)$/i;
-              const addon = /\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\\b/i;
-              const genericAddon = /^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$/i;
+              const addon = /\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|adicionais|borda|extra|condimento|dip|acompanhamento|acompanhamentos)\\b/i;
+              const food = /\\b(combo|marmita|prato|refei[cç][aã]o|hamb[uú]rguer|hamburguer|burger|sandu[ií]che|lanche|chicken|whopper|frango|lingui[cç]a|carne|bife|costela|calabresa|pizza|pastel|esfiha|coxinha|hot[ -]?dog|cachorro[ -]?quente|yakisoba|sushi|temaki|poke|tapioca|cheeseburger|x[ -]?(burger|salada|bacon|frango))\\b/i;
 
               function isVisible(el) {
                 if (!el || !el.getBoundingClientRect) return false;
@@ -621,47 +608,6 @@ public class MainActivity extends Activity {
                 return fallback;
               }
 
-              function originalPriceFromCard(card, promoPrice) {
-                let explicit = null;
-
-                for (const el of Array.from(card.querySelectorAll('*'))) {
-                  const txt = clean(el.innerText);
-                  const m = txt.match(onePriceRe);
-                  if (!m) continue;
-
-                  const n = toNumber(m[1]);
-                  if (!(n > promoPrice)) continue;
-
-                  const style = getComputedStyle(el);
-                  const line =
-                    (style.textDecorationLine || '') + ' ' +
-                    (style.textDecoration || '');
-                  const cls = String(el.className || '');
-
-                  if (/line-through/i.test(line) ||
-                      /old|original|from|de-price|list-price|strike/i.test(cls)) {
-                    explicit = Math.max(explicit || 0, n);
-                  }
-                }
-
-                if (explicit) return explicit;
-
-                const prices = allPrices(card.innerText);
-                const higher = prices.filter(n => n > promoPrice * 1.03);
-
-                if (higher.length >= 1 && prices.length <= 4) {
-                  const max = Math.max(...higher);
-                  const text = clean(card.innerText);
-
-                  if (/\\b(de|por|off|desconto|promo[cç][aã]o)\\b/i.test(text) ||
-                      max >= promoPrice * 1.15) {
-                    return max;
-                  }
-                }
-
-                return null;
-              }
-
               const priceElements =
                 Array.from(document.querySelectorAll('body *')).filter(el => {
                   if (!isVisible(el)) return false;
@@ -696,7 +642,8 @@ public class MainActivity extends Activity {
                 if (!prices.length) continue;
 
                 const promoPrice = Math.min(...prices);
-                const originalPrice = originalPriceFromCard(card, promoPrice);
+                if (!(promoPrice > 0 && promoPrice <= 9.99)) continue;
+                if (addon.test(product) || !food.test(product)) continue;
 
                 const normalized = product
                   .toLowerCase()
@@ -706,7 +653,7 @@ public class MainActivity extends Activity {
                   .trim();
 
                 const sourceText = clean(card.innerText).slice(0, 320);
-                if (!normalized || genericAddon.test(product) || addon.test(product + ' ' + sourceText)) continue;
+                if (!normalized) continue;
 
                 let offerUrl = null;
                 const nearestLink = card.closest('a[href]') || card.querySelector('a[href]');
@@ -723,34 +670,18 @@ public class MainActivity extends Activity {
                 const item = {
                   product,
                   price: promoPrice,
-                  originalPrice: originalPrice,
-                  hasDisplayedDiscount: !!(
-                    originalPrice && originalPrice > promoPrice
-                  ),
                   sourceText,
                   offerUrl
                 };
 
                 const old = byKey.get(normalized);
-
-                if (!old ||
-                    item.price < old.price ||
-                    (!!item.originalPrice && !old.originalPrice)) {
+                if (!old || item.price < old.price) {
                   byKey.set(normalized, item);
                 }
               }
 
               const items = Array.from(byKey.values())
-                .sort((a, b) => {
-                  const da = a.originalPrice
-                    ? (a.originalPrice - a.price) / a.originalPrice
-                    : 0;
-                  const db = b.originalPrice
-                    ? (b.originalPrice - b.price) / b.originalPrice
-                    : 0;
-
-                  return db - da || a.price - b.price;
-                })
+                .sort((a, b) => a.price - b.price)
                 .slice(0, 80);
 
               const restaurant =
@@ -760,7 +691,7 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.__CALL__(JSON.stringify({
-                scannerVersion: 5,
+                scannerVersion: 6,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
@@ -787,7 +718,7 @@ public class MainActivity extends Activity {
         }
 
         if (!automatic) {
-            status.setText("Lendo nomes, preços e promoções visíveis...");
+            status.setText("Procurando comidas por até R$9,99...");
         }
 
         webView.evaluateJavascript(buildScanScript(automatic), null);
@@ -868,14 +799,14 @@ public class MainActivity extends Activity {
         public void report(String payload) {
             runOnUiThread(() -> status.setText("Enviando dados para Garimpo..."));
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "android-scanner-v5-manual");
+                UploadResult result = sendPayload(payload, "garimpo-999-v6-manual");
 
                 runOnUiThread(() -> {
                     if (result.success) {
                         status.setText(
-                                result.accepted + " produtos enviados. " +
+                                result.accepted + " achados enviados. " +
                                 result.displayedDiscounts +
-                                " promoções com preço anterior detectadas."
+                                " itens até R$9,99 detectados."
                         );
                     } else {
                         status.setText("Falha no envio: " + result.error);
@@ -889,7 +820,7 @@ public class MainActivity extends Activity {
             if (!autoMode || cancelled) return;
 
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "android-scanner-v5-auto");
+                UploadResult result = sendPayload(payload, "garimpo-999-v6-auto");
 
                 runOnUiThread(() -> {
                     if (!autoMode || cancelled) return;
@@ -960,7 +891,8 @@ public class MainActivity extends Activity {
             int count = items == null ? 0 : items.length();
 
             if (count == 0) {
-                result.error = "Nenhum produto válido encontrado.";
+                result.success = true;
+                result.accepted = 0;
                 return result;
             }
 
