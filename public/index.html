@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+  <meta name="theme-color" content="#111111">
+  <title>Garimpo Food</title>
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div>
+        <div class="eyebrow">GARIMPO FOOD</div>
+        <h1>Ofertas fora do padrão, perto de você.</h1>
+      </div>
+      <button id="refreshBtn" class="primary">Atualizar</button>
+    </header>
+
+    <section class="controls">
+      <div class="tabs">
+        <button class="tab active" data-filter="all">Agora</button>
+        <button class="tab" data-filter="extreme">Extremas</button>
+        <button class="tab" data-filter="under5">Até R$5</button>
+      </div>
+      <input id="searchInput" type="search" placeholder="Buscar pizza, marmita, combo...">
+    </section>
+
+    <section class="status-card">
+      <div>
+        <strong id="statusTitle">São Paulo</strong>
+        <div id="statusText">Carregando ofertas disponíveis...</div>
+      </div>
+      <div id="lastUpdate" class="muted"></div>
+    </section>
+
+    <main id="dealList" class="deal-list"></main>
+  </div>
+
+  <template id="dealTemplate">
+    <article class="deal-card">
+      <div class="deal-top">
+        <span class="label"></span>
+        <span class="score"></span>
+      </div>
+      <h2 class="product"></h2>
+      <div class="restaurant"></div>
+      <div class="price-row">
+        <span class="reference"></span>
+        <strong class="price"></strong>
+      </div>
+      <div class="discount"></div>
+      <a class="open-link" target="_blank" rel="noopener">Abrir no 99Food</a>
+    </article>
+  </template>
+
+  <script src="/app.js" defer></script>
+</body>
+</html>
