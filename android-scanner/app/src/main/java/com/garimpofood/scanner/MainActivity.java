@@ -3,6 +3,7 @@ package com.garimpofood.scanner;
 import android.annotation.SuppressLint;
 import android.app.Activity;
 import android.content.Intent;
+import android.content.SharedPreferences;
 import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
@@ -26,9 +27,12 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
+import java.util.UUID;
 
 public class MainActivity extends Activity {
     private static final String INGEST_URL =
@@ -37,6 +41,8 @@ public class MainActivity extends Activity {
             "https://sage-starlight-0f4485.netlify.app";
     private static final String DEALS_URL =
             "https://sage-starlight-0f4485.netlify.app/.netlify/functions/deals99";
+    private static final String REPORT_URL =
+            "https://sage-starlight-0f4485.netlify.app/.netlify/functions/report99";
     private static final String CITY_URL =
             "https://99app.com/99food/sao-paulo/";
 
@@ -45,12 +51,11 @@ public class MainActivity extends Activity {
     private static final long PAGE_SETTLE_MS = 650;
 
     private WebView webView;
-    private EditText urlInput;
     private TextView status;
-    private Button openButton;
-    private Button scanButton;
+    private Button locationButton;
     private Button garimpoButton;
     private Button autoScanButton;
+    private SharedPreferences prefs;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<String> autoUrls = new ArrayList<>();
@@ -75,12 +80,11 @@ public class MainActivity extends Activity {
         setContentView(R.layout.activity_main);
 
         webView = findViewById(R.id.webView);
-        urlInput = findViewById(R.id.urlInput);
         status = findViewById(R.id.status);
-        openButton = findViewById(R.id.openButton);
-        scanButton = findViewById(R.id.scanButton);
+        locationButton = findViewById(R.id.locationButton);
         garimpoButton = findViewById(R.id.garimpoButton);
         autoScanButton = findViewById(R.id.autoScanButton);
+        prefs = getSharedPreferences("garimpo999", MODE_PRIVATE);
 
         WebSettings settings = webView.getSettings();
         settings.setJavaScriptEnabled(true);
@@ -105,8 +109,6 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                urlInput.setText(url);
-
                 if (autoMode && discovering && isCityPage(url)) {
                     status.setText("Descobrindo restaurantes 99Food em São Paulo...");
                     handler.postDelayed(() -> {
@@ -148,14 +150,10 @@ public class MainActivity extends Activity {
 
         webView.addJavascriptInterface(new ScannerBridge(), "GarimpoAndroid");
 
-        openButton.setOnClickListener(v -> {
+        locationButton.setOnClickListener(v -> {
             if (autoMode) return;
-            String url = urlInput.getText().toString().trim();
-            if (!url.isEmpty()) webView.loadUrl(url);
-        });
-
-        scanButton.setOnClickListener(v -> {
-            if (!autoMode) scanCurrentPage(false);
+            status.setText("Defina sua localização no 99Food. Depois toque em Escanear agora.");
+            webView.loadUrl(CITY_URL);
         });
 
         garimpoButton.setOnClickListener(v -> {
@@ -168,7 +166,7 @@ public class MainActivity extends Activity {
         });
 
         if (!handleIncomingOffer(getIntent())) {
-            webView.loadUrl(urlInput.getText().toString());
+            loadGarimpoFeed();
         }
     }
 
@@ -198,7 +196,6 @@ public class MainActivity extends Activity {
 
         pendingOfferName = product.trim();
         pendingOfferUrl = url;
-        urlInput.setText(url);
         status.setText("Abrindo oferta: " + pendingOfferName);
         webView.loadUrl(url);
         return true;
@@ -277,8 +274,79 @@ public class MainActivity extends Activity {
     }
 
     private String money(double value) {
-        return String.format(new java.util.Locale("pt", "BR"), "R$ %.2f", value)
+        return String.format(new Locale("pt", "BR"), "R$ %.2f", value)
                 .replace(".", ",");
+    }
+
+    private String categoryLocal(String product) {
+        String p = String.valueOf(product).toLowerCase(new Locale("pt", "BR"));
+        if (p.matches(".*\\b(marmita|prato|refei[cç][aã]o|yakisoba)\\b.*")) return "Refeições";
+        if (p.matches(".*\\b(hamb[uú]rguer|hamburguer|burger|sandu[ií]che|lanche|chicken|whopper|hot[ -]?dog|cachorro[ -]?quente|cheeseburger|x[ -]?(burger|salada|bacon|frango))\\b.*")) return "Lanches";
+        if (p.matches(".*\\b(frango|lingui[cç]a|carne|bife|costela|calabresa)\\b.*")) return "Carnes";
+        if (p.matches(".*\\b(pizza|pastel|esfiha|coxinha|tapioca)\\b.*")) return "Pizza/Pastel";
+        return "Outros";
+    }
+
+    private long scannedAtMillis(String scannedAt) {
+        try { return Instant.parse(scannedAt).toEpochMilli(); }
+        catch (Exception ignored) { return System.currentTimeMillis(); }
+    }
+
+    private String freshnessText(long ageMs) {
+        long minutes = Math.max(0, ageMs / 60000L);
+        if (minutes < 2) return "Encontrado agora";
+        if (minutes < 60) return "Encontrado há " + minutes + " min";
+        return "Encontrado há 1h — pode ter mudado";
+    }
+
+    private String hiddenKey(String restaurant, String product) {
+        String raw = (restaurant + "|" + product).toLowerCase(Locale.ROOT);
+        return "hidden_" + Integer.toHexString(raw.hashCode());
+    }
+
+    private boolean isLocallyHidden(String restaurant, String product) {
+        String key = hiddenKey(restaurant, product);
+        long at = prefs.getLong(key, 0L);
+        if (at == 0L) return false;
+        if (System.currentTimeMillis() - at < 6L * 60L * 60L * 1000L) return true;
+        prefs.edit().remove(key).apply();
+        return false;
+    }
+
+    private String getInstallId() {
+        String id = prefs.getString("install_id", null);
+        if (id != null) return id;
+        id = UUID.randomUUID().toString();
+        prefs.edit().putString("install_id", id).apply();
+        return id;
+    }
+
+    private void sendMissingReport(String product, String restaurant, String url) {
+        new Thread(() -> {
+            HttpURLConnection connection = null;
+            try {
+                JSONObject bodyJson = new JSONObject();
+                bodyJson.put("product", product);
+                bodyJson.put("restaurant", restaurant);
+                bodyJson.put("url", url);
+                bodyJson.put("installId", getInstallId());
+
+                byte[] body = bodyJson.toString().getBytes(StandardCharsets.UTF_8);
+                connection = (HttpURLConnection) new URL(REPORT_URL).openConnection();
+                connection.setRequestMethod("POST");
+                connection.setConnectTimeout(6000);
+                connection.setReadTimeout(6000);
+                connection.setDoOutput(true);
+                connection.setRequestProperty("Content-Type", "application/json; charset=utf-8");
+                try (OutputStream out = connection.getOutputStream()) {
+                    out.write(body);
+                }
+                connection.getResponseCode();
+            } catch (Exception ignored) {
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+        }).start();
     }
 
     private void loadGarimpoFeed() {
@@ -300,19 +368,17 @@ public class MainActivity extends Activity {
                                 ? connection.getInputStream()
                                 : connection.getErrorStream()
                 );
-
-                if (code < 200 || code >= 300) {
-                    throw new Exception("HTTP " + code);
-                }
+                if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
 
                 JSONObject json = new JSONObject(body);
                 JSONArray deals = json.optJSONArray("deals");
-
                 StringBuilder cards = new StringBuilder();
                 int shown = 0;
+                long now = System.currentTimeMillis();
+                long maxAge = 90L * 60L * 1000L;
 
                 if (deals != null) {
-                    for (int i = 0; i < deals.length() && shown < 100; i++) {
+                    for (int i = 0; i < deals.length() && shown < 120; i++) {
                         JSONObject d = deals.optJSONObject(i);
                         if (d == null) continue;
 
@@ -321,11 +387,15 @@ public class MainActivity extends Activity {
                         if (!isEligibleFoodLocal(product, price)) continue;
 
                         String restaurant = d.optString("restaurant", "99Food");
-                        String restaurantUrl = d.optString("offerUrl",
-                                d.optString("url", ""));
+                        if (isLocallyHidden(restaurant, product)) continue;
 
-                        String label = "ATÉ R$9,99";
-                        String detail = "Preço encontrado agora";
+                        String restaurantUrl = d.optString("offerUrl", d.optString("url", ""));
+                        String scannedAt = d.optString("scannedAt", "");
+                        long age = now - scannedAtMillis(scannedAt);
+                        if (age > maxAge) continue;
+
+                        String category = categoryLocal(product);
+                        String fresh = freshnessText(age);
 
                         Uri deepLink = new Uri.Builder()
                                 .scheme("garimpo")
@@ -334,11 +404,21 @@ public class MainActivity extends Activity {
                                 .appendQueryParameter("product", product)
                                 .build();
 
-                        cards.append("<article class='card'>")
+                        cards.append("<article class='card' data-price='")
+                                .append(price)
+                                .append("' data-cat='")
+                                .append(htmlEscape(category))
+                                .append("' data-product='")
+                                .append(htmlEscape(product))
+                                .append("' data-restaurant='")
+                                .append(htmlEscape(restaurant))
+                                .append("' data-url='")
+                                .append(htmlEscape(restaurantUrl))
+                                .append("'>")
                                 .append("<div class='top'><b>")
-                                .append(htmlEscape(label))
+                                .append(htmlEscape(category))
                                 .append("</b><span>")
-                                .append(htmlEscape(money(price)))
+                                .append(htmlEscape(fresh))
                                 .append("</span></div>")
                                 .append("<h2>")
                                 .append(htmlEscape(product))
@@ -349,12 +429,11 @@ public class MainActivity extends Activity {
                                 .append("<div class='price'>")
                                 .append(htmlEscape(money(price)))
                                 .append("</div>")
-                                .append("<p class='detail'>")
-                                .append(htmlEscape(detail))
-                                .append("</p>")
-                                .append("<a href='")
+                                .append("<p class='detail'>Preço encontrado agora no 99Food</p>")
+                                .append("<a class='open' href='")
                                 .append(htmlEscape(deepLink.toString()))
                                 .append("'>Ver oferta</a>")
+                                .append("<button class='report' onclick='reportMissing(this)'>Não encontrei esta oferta</button>")
                                 .append("</article>");
 
                         shown++;
@@ -362,30 +441,37 @@ public class MainActivity extends Activity {
                 }
 
                 String empty = shown == 0
-                        ? "<div class='empty'>Nenhuma oferta válida encontrada.</div>"
+                        ? "<div class='empty'>Nenhum achado recente até R$9,99. Faça uma nova varredura.</div>"
                         : "";
 
                 String html = "<!doctype html><html><head>" +
                         "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
                         "<style>" +
-                        "body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:16px}" +
-                        "header{margin-bottom:16px}small{color:#666}.subtitle{color:#555;margin-top:-8px}.card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}" +
-                        ".top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666}" +
-                        "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:28px;font-weight:800}" +
-                        ".detail{font-size:14px;font-weight:700}.card a{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
-                        ".empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
-                        "</style></head><body><header><small>GARIMPO 9,99</small><h1>Comida de verdade por até R$9,99</h1><p class='subtitle'>Preço atual encontrado no 99Food. Sem depender de preço anterior.</p></header>" +
-                        cards + empty + "</body></html>";
+                        "*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:14px}" +
+                        "header{margin-bottom:14px}small{color:#666;font-weight:800;letter-spacing:.12em}.subtitle{color:#555;margin:4px 0 0;font-size:14px}" +
+                        ".filters{display:flex;gap:7px;overflow:auto;padding:7px 0}.pill{border:0;border-radius:999px;padding:9px 12px;white-space:nowrap;background:#e7e3da;font-weight:700}.pill.on{background:#111;color:#fff}" +
+                        ".card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}.top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666;text-transform:none}" +
+                        "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:30px;font-weight:800}.detail{font-size:13px;color:#555}" +
+                        ".open{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
+                        ".report{display:block;width:100%;border:0;background:transparent;color:#777;padding:11px 4px 2px;font-size:12px}.empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
+                        "</style></head><body>" +
+                        "<header><small>GARIMPO 9,99</small><h1>Comida de verdade por até R$9,99</h1><p class='subtitle'>Achados recentes na localização definida no 99Food.</p></header>" +
+                        "<div class='filters priceFilters'>" +
+                        "<button class='pill' data-max='.99'>Até R$0,99</button><button class='pill' data-max='4.99'>Até R$4,99</button><button class='pill on' data-max='9.99'>Até R$9,99</button></div>" +
+                        "<div class='filters catFilters'>" +
+                        "<button class='pill on' data-cat='Todos'>Todos</button><button class='pill' data-cat='Refeições'>Refeições</button><button class='pill' data-cat='Lanches'>Lanches</button><button class='pill' data-cat='Carnes'>Carnes</button><button class='pill' data-cat='Pizza/Pastel'>Pizza/Pastel</button></div>" +
+                        "<main id='cards'>" + cards + empty + "</main>" +
+                        "<script>" +
+                        "let max=9.99,cat='Todos';" +
+                        "function apply(){document.querySelectorAll('.card').forEach(c=>{const ok=Number(c.dataset.price)<=max&&(cat==='Todos'||c.dataset.cat===cat);c.style.display=ok?'block':'none'})}" +
+                        "document.querySelectorAll('.priceFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.priceFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');max=Number(b.dataset.max);apply()});" +
+                        "document.querySelectorAll('.catFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.catFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');cat=b.dataset.cat;apply()});" +
+                        "function reportMissing(btn){const c=btn.closest('.card');GarimpoAndroid.reportMissing(JSON.stringify({product:c.dataset.product,restaurant:c.dataset.restaurant,url:c.dataset.url}));c.remove();}" +
+                        "</script></body></html>";
 
-                runOnUiThread(() -> {
-                    webView.loadDataWithBaseURL(
-                            "https://garimpo.local/",
-                            html,
-                            "text/html",
-                            "UTF-8",
-                            null
-                    );
-                });
+                runOnUiThread(() -> webView.loadDataWithBaseURL(
+                        "https://garimpo.local/", html, "text/html", "UTF-8", null
+                ));
             } catch (Exception e) {
                 runOnUiThread(() ->
                         status.setText("Falha ao carregar Garimpo: " + e.getMessage())
@@ -403,10 +489,8 @@ public class MainActivity extends Activity {
     }
 
     private void setManualControlsEnabled(boolean enabled) {
-        openButton.setEnabled(enabled);
-        scanButton.setEnabled(enabled);
+        locationButton.setEnabled(enabled);
         garimpoButton.setEnabled(enabled);
-        urlInput.setEnabled(enabled);
     }
 
     private void startAutoScan() {
@@ -432,12 +516,12 @@ public class MainActivity extends Activity {
         autoMode = false;
         discovering = false;
         waitingForRestaurantPage = false;
-        autoScanButton.setText("Escanear rápido — 12 restaurantes");
+        autoScanButton.setText("Escanear agora");
         setManualControlsEnabled(true);
         status.setText(
                 "Varredura interrompida. " +
                 autoSuccess + " restaurantes enviados, " +
-                autoProducts + " produtos."
+                autoProducts + " achados."
         );
     }
 
@@ -445,14 +529,14 @@ public class MainActivity extends Activity {
         autoMode = false;
         discovering = false;
         waitingForRestaurantPage = false;
-        autoScanButton.setText("Escanear rápido — 12 restaurantes");
+        autoScanButton.setText("Escanear agora");
         setManualControlsEnabled(true);
         status.setText(
                 "Concluído: " + autoSuccess + "/" + autoUrls.size() +
-                " restaurantes enviados, " + autoProducts +
-                " produtos, " + autoFailed +
-                " falhas. Toque em Ver Garimpo."
+                " restaurantes, " + autoProducts +
+                " achados. Carregando resultados..."
         );
+        handler.postDelayed(this::loadGarimpoFeed, 600);
     }
 
     private void discoverRestaurantLinks() {
@@ -725,6 +809,21 @@ public class MainActivity extends Activity {
 
     private class ScannerBridge {
         @JavascriptInterface
+        public void reportMissing(String payload) {
+            try {
+                JSONObject p = new JSONObject(payload);
+                String product = p.optString("product", "");
+                String restaurant = p.optString("restaurant", "");
+                String url = p.optString("url", "");
+                if (!product.isEmpty()) {
+                    prefs.edit().putLong(hiddenKey(restaurant, product), System.currentTimeMillis()).apply();
+                    sendMissingReport(product, restaurant, url);
+                }
+            } catch (Exception ignored) {
+            }
+        }
+
+        @JavascriptInterface
         public void offerLocateResult(boolean found) {
             runOnUiThread(() -> {
                 if (found) {
@@ -761,7 +860,7 @@ public class MainActivity extends Activity {
                     if (autoUrls.isEmpty()) {
                         autoMode = false;
                         discovering = false;
-                        autoScanButton.setText("Escanear rápido — 12 restaurantes");
+                        autoScanButton.setText("Escanear agora");
                         setManualControlsEnabled(true);
                         status.setText(
                                 "Nenhum restaurante foi encontrado na página de São Paulo."
@@ -785,7 +884,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     autoMode = false;
                     discovering = false;
-                    autoScanButton.setText("Escanear rápido — 12 restaurantes");
+                    autoScanButton.setText("Escanear agora");
                     setManualControlsEnabled(true);
                     status.setText(
                             "Falha ao ler a lista de restaurantes: " + e.getMessage()
@@ -838,7 +937,7 @@ public class MainActivity extends Activity {
                     } else {
                         status.setText(
                                 autoIndex + "/" + autoUrls.size() +
-                                " concluídos. Aguardando 5 segundos..."
+                                " concluídos. Continuando..."
                         );
 
                         handler.postDelayed(
