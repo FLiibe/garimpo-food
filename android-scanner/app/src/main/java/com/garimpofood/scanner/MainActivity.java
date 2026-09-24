@@ -9,6 +9,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.webkit.JavascriptInterface;
 import android.webkit.WebSettings;
+import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
 import android.widget.Button;
@@ -37,7 +38,7 @@ public class MainActivity extends Activity {
     private static final String CITY_URL =
             "https://99app.com/99food/sao-paulo/";
 
-    private static final int AUTO_MAX_RESTAURANTS = 20;
+    private static final int AUTO_MAX_RESTAURANTS = 12;
     private static final long AUTO_DELAY_MS = 1400;
     private static final long PAGE_SETTLE_MS = 900;
 
@@ -91,6 +92,16 @@ public class MainActivity extends Activity {
 
         webView.setWebViewClient(new WebViewClient() {
             @Override
+            public boolean shouldOverrideUrlLoading(WebView view, WebResourceRequest request) {
+                Uri uri = request.getUrl();
+                if ("garimpo".equals(uri.getScheme()) && "offer".equals(uri.getHost())) {
+                    handleIncomingOffer(new Intent(Intent.ACTION_VIEW, uri));
+                    return true;
+                }
+                return false;
+            }
+
+            @Override
             public void onPageFinished(WebView view, String url) {
                 urlInput.setText(url);
 
@@ -98,7 +109,7 @@ public class MainActivity extends Activity {
                     status.setText("Descobrindo restaurantes 99Food em São Paulo...");
                     handler.postDelayed(() -> {
                         if (autoMode && discovering && !cancelled) discoverRestaurantLinks();
-                    }, 1600);
+                    }, 650);
                     return;
                 }
 
@@ -192,15 +203,23 @@ public class MainActivity extends Activity {
         String encoded = JSONObject.quote(pendingOfferName);
 
         String script =
-                "(function(){" +
+                "(async function(){" +
                 "const needle=" + encoded + ";" +
+                "const sleep=ms=>new Promise(r=>setTimeout(r,ms));" +
                 "const norm=s=>(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')" +
                 ".toLowerCase().replace(/\\s+/g,' ').trim();" +
                 "const n=norm(needle);" +
+                "function find(){" +
                 "const els=Array.from(document.querySelectorAll('h2,h3,h4,h5,[class*=title],[class*=name],article,li,a,button'));" +
-                "const hits=els.filter(e=>{const t=norm(e.innerText);return t&&t.includes(n);})" +
-                ".sort((a,b)=>(a.innerText||'').length-(b.innerText||'').length);" +
-                "const el=hits[0];" +
+                "return els.filter(e=>{const t=norm(e.innerText);return t&&t.includes(n);})" +
+                ".sort((a,b)=>(a.innerText||'').length-(b.innerText||'').length)[0]||null;" +
+                "}" +
+                "window.scrollTo(0,0);await sleep(180);" +
+                "let el=find();" +
+                "for(let i=0;!el&&i<12;i++){" +
+                "window.scrollBy(0,Math.max(500,window.innerHeight*0.75));" +
+                "await sleep(240);el=find();" +
+                "}" +
                 "if(!el){GarimpoAndroid.offerLocateResult(false);return;}" +
                 "el.scrollIntoView({behavior:'smooth',block:'center'});" +
                 "const oldOutline=el.style.outline;const oldBg=el.style.backgroundColor;" +
@@ -255,7 +274,7 @@ public class MainActivity extends Activity {
         autoMode = false;
         discovering = false;
         waitingForRestaurantPage = false;
-        autoScanButton.setText("Escanear São Paulo — 20 restaurantes");
+        autoScanButton.setText("Escanear rápido — 12 restaurantes");
         setManualControlsEnabled(true);
         status.setText(
                 "Varredura interrompida. " +
@@ -268,7 +287,7 @@ public class MainActivity extends Activity {
         autoMode = false;
         discovering = false;
         waitingForRestaurantPage = false;
-        autoScanButton.setText("Escanear São Paulo — 20 restaurantes");
+        autoScanButton.setText("Escanear rápido — 12 restaurantes");
         setManualControlsEnabled(true);
         status.setText(
                 "Concluído: " + autoSuccess + "/" + autoUrls.size() +
@@ -641,7 +660,7 @@ public class MainActivity extends Activity {
                     if (autoUrls.isEmpty()) {
                         autoMode = false;
                         discovering = false;
-                        autoScanButton.setText("Escanear São Paulo — 20 restaurantes");
+                        autoScanButton.setText("Escanear rápido — 12 restaurantes");
                         setManualControlsEnabled(true);
                         status.setText(
                                 "Nenhum restaurante foi encontrado na página de São Paulo."
@@ -665,7 +684,7 @@ public class MainActivity extends Activity {
                 runOnUiThread(() -> {
                     autoMode = false;
                     discovering = false;
-                    autoScanButton.setText("Escanear São Paulo — 20 restaurantes");
+                    autoScanButton.setText("Escanear rápido — 12 restaurantes");
                     setManualControlsEnabled(true);
                     status.setText(
                             "Falha ao ler a lista de restaurantes: " + e.getMessage()
