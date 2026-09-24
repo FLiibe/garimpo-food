@@ -13,3 +13,5 @@ Aplicativo de teste que abre páginas públicas 99Food no próprio aparelho Andr
 7. No Garimpo Food, toque em **Atualizar**.
 
 A V1 não faz pedidos, não coleta senha e não tenta contornar autenticação ou captcha.
+
+Build automático habilitado via GitHub Actions.
