@@ -136,7 +136,10 @@ export default async (req) => {
 
       const historyKey = "history/" + productId;
       const history = (await store.get(historyKey, { type:"json" }).catch(()=>null)) || [];
-      const historicReference = median(history.map(x => Number(x.price)));
+      const higherHistory = history
+        .map(x => Number(x.price))
+        .filter(n => Number.isFinite(n) && n > item.price * 1.15);
+      const historicReference = higherHistory.length >= 2 ? median(higherHistory) : null;
 
       let referencePrice = null;
       let referenceSource = null;
@@ -144,7 +147,7 @@ export default async (req) => {
       if (item.originalPrice && item.originalPrice > item.price) {
         referencePrice = item.originalPrice;
         referenceSource = "displayed";
-      } else if (historicReference && historicReference > item.price * 1.05) {
+      } else if (historicReference) {
         referencePrice = historicReference;
         referenceSource = "history";
       }
