@@ -2,6 +2,8 @@ package com.garimpofood.scanner;
 
 import android.annotation.SuppressLint;
 import android.app.Activity;
+import android.content.Intent;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
@@ -36,8 +38,8 @@ public class MainActivity extends Activity {
             "https://99app.com/99food/sao-paulo/";
 
     private static final int AUTO_MAX_RESTAURANTS = 20;
-    private static final long AUTO_DELAY_MS = 5000;
-    private static final long PAGE_SETTLE_MS = 2300;
+    private static final long AUTO_DELAY_MS = 1400;
+    private static final long PAGE_SETTLE_MS = 900;
 
     private WebView webView;
     private EditText urlInput;
@@ -59,6 +61,9 @@ public class MainActivity extends Activity {
     private int autoSuccess = 0;
     private int autoFailed = 0;
     private int autoProducts = 0;
+
+    private String pendingOfferName = null;
+    private String pendingOfferUrl = null;
 
     @SuppressLint({"SetJavaScriptEnabled", "AddJavascriptInterface"})
     @Override
@@ -110,6 +115,13 @@ public class MainActivity extends Activity {
                     return;
                 }
 
+                if (!autoMode && pendingOfferName != null && pendingOfferUrl != null &&
+                        url != null && url.contains("99app.com/99food/")) {
+                    status.setText("Localizando oferta: " + pendingOfferName);
+                    handler.postDelayed(MainActivity.this::locatePendingOffer, 900);
+                    return;
+                }
+
                 if (!autoMode) {
                     status.setText("Página carregada. Role o menu e toque em Escanear página.");
                 }
@@ -137,7 +149,74 @@ public class MainActivity extends Activity {
             else startAutoScan();
         });
 
-        webView.loadUrl(urlInput.getText().toString());
+        if (!handleIncomingOffer(getIntent())) {
+            webView.loadUrl(urlInput.getText().toString());
+        }
+    }
+
+    private boolean handleIncomingOffer(Intent intent) {
+        if (intent == null) return false;
+        Uri data = intent.getData();
+        if (data == null || !"garimpo".equals(data.getScheme()) || !"offer".equals(data.getHost())) {
+            return false;
+        }
+
+        String url = data.getQueryParameter("url");
+        String product = data.getQueryParameter("product");
+
+        if (url == null || product == null) return false;
+
+        try {
+            Uri parsed = Uri.parse(url);
+            String host = parsed.getHost();
+            if (host == null ||
+                    !(host.equals("99app.com") || host.equals("www.99app.com")) ||
+                    !parsed.getPath().contains("/99food/")) {
+                return false;
+            }
+        } catch (Exception e) {
+            return false;
+        }
+
+        pendingOfferName = product.trim();
+        pendingOfferUrl = url;
+        urlInput.setText(url);
+        status.setText("Abrindo oferta: " + pendingOfferName);
+        webView.loadUrl(url);
+        return true;
+    }
+
+    private void locatePendingOffer() {
+        if (pendingOfferName == null || pendingOfferName.isEmpty()) return;
+
+        String encoded = JSONObject.quote(pendingOfferName);
+
+        String script =
+                "(function(){" +
+                "const needle=" + encoded + ";" +
+                "const norm=s=>(s||'').normalize('NFD').replace(/[\\u0300-\\u036f]/g,'')" +
+                ".toLowerCase().replace(/\\s+/g,' ').trim();" +
+                "const n=norm(needle);" +
+                "const els=Array.from(document.querySelectorAll('h2,h3,h4,h5,[class*=title],[class*=name],article,li,a,button'));" +
+                "const hits=els.filter(e=>{const t=norm(e.innerText);return t&&t.includes(n);})" +
+                ".sort((a,b)=>(a.innerText||'').length-(b.innerText||'').length);" +
+                "const el=hits[0];" +
+                "if(!el){GarimpoAndroid.offerLocateResult(false);return;}" +
+                "el.scrollIntoView({behavior:'smooth',block:'center'});" +
+                "const oldOutline=el.style.outline;const oldBg=el.style.backgroundColor;" +
+                "el.style.outline='4px solid #111';el.style.outlineOffset='4px';el.style.backgroundColor='#fff3b0';" +
+                "setTimeout(()=>{el.style.outline=oldOutline;el.style.backgroundColor=oldBg;},8000);" +
+                "GarimpoAndroid.offerLocateResult(true);" +
+                "})();";
+
+        webView.evaluateJavascript(script, null);
+    }
+
+    @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        handleIncomingOffer(intent);
     }
 
     private boolean isCityPage(String url) {
@@ -204,12 +283,12 @@ public class MainActivity extends Activity {
             (async function() {
               const sleep = ms => new Promise(r => setTimeout(r, ms));
 
-              for (let i = 0; i < 7; i++) {
-                window.scrollBy(0, Math.max(650, window.innerHeight * 0.85));
-                await sleep(420);
+              for (let i = 0; i < 4; i++) {
+                window.scrollBy(0, Math.max(700, window.innerHeight * 0.9));
+                await sleep(220);
               }
 
-              await sleep(500);
+              await sleep(220);
 
               const seen = new Set();
               const links = [];
@@ -264,12 +343,12 @@ public class MainActivity extends Activity {
                 ? """
                   const sleep = ms => new Promise(r => setTimeout(r, ms));
                   window.scrollTo(0, 0);
-                  await sleep(250);
-                  for (let i = 0; i < 6; i++) {
-                    window.scrollBy(0, Math.max(550, window.innerHeight * 0.75));
-                    await sleep(360);
+                  await sleep(120);
+                  for (let i = 0; i < 3; i++) {
+                    window.scrollBy(0, Math.max(650, window.innerHeight * 0.9));
+                    await sleep(180);
                   }
-                  await sleep(300);
+                  await sleep(160);
                   """
                 : "";
 
@@ -288,7 +367,8 @@ public class MainActivity extends Activity {
                 .filter(n => Number.isFinite(n) && n > 0 && n < 1000);
 
               const badName = /^(adicionar|escolher|ver mais|a partir de|indispon[ií]vel|novo|promo[cç][aã]o)$/i;
-              const addon = /\\b(molho|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra)\\b/i;
+              const addon = /\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\\b/i;
+              const genericAddon = /^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$/i;
 
               function isVisible(el) {
                 if (!el || !el.getBoundingClientRect) return false;
@@ -435,7 +515,20 @@ public class MainActivity extends Activity {
                   .replace(/[^a-z0-9]+/g, ' ')
                   .trim();
 
-                if (!normalized || addon.test(product)) continue;
+                const sourceText = clean(card.innerText).slice(0, 320);
+                if (!normalized || genericAddon.test(product) || addon.test(product + ' ' + sourceText)) continue;
+
+                let offerUrl = null;
+                const nearestLink = card.closest('a[href]') || card.querySelector('a[href]');
+                if (nearestLink) {
+                  try {
+                    const u = new URL(nearestLink.href, location.href);
+                    if ((u.hostname === '99app.com' || u.hostname === 'www.99app.com') &&
+                        u.pathname.includes('/99food/')) {
+                      offerUrl = u.href;
+                    }
+                  } catch {}
+                }
 
                 const item = {
                   product,
@@ -443,7 +536,9 @@ public class MainActivity extends Activity {
                   originalPrice: originalPrice,
                   hasDisplayedDiscount: !!(
                     originalPrice && originalPrice > promoPrice
-                  )
+                  ),
+                  sourceText,
+                  offerUrl
                 };
 
                 const old = byKey.get(normalized);
@@ -475,7 +570,7 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.__CALL__(JSON.stringify({
-                scannerVersion: 4,
+                scannerVersion: 5,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
@@ -509,6 +604,19 @@ public class MainActivity extends Activity {
     }
 
     private class ScannerBridge {
+        @JavascriptInterface
+        public void offerLocateResult(boolean found) {
+            runOnUiThread(() -> {
+                if (found) {
+                    status.setText("Oferta localizada e destacada: " + pendingOfferName);
+                } else {
+                    status.setText("Produto não encontrado automaticamente nesta página.");
+                }
+                pendingOfferName = null;
+                pendingOfferUrl = null;
+            });
+        }
+
         @JavascriptInterface
         public void reportRestaurantLinks(String payload) {
             if (!autoMode || cancelled) return;
@@ -570,7 +678,7 @@ public class MainActivity extends Activity {
         public void report(String payload) {
             runOnUiThread(() -> status.setText("Enviando dados para Garimpo..."));
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "android-scanner-v4-manual");
+                UploadResult result = sendPayload(payload, "android-scanner-v5-manual");
 
                 runOnUiThread(() -> {
                     if (result.success) {
@@ -591,7 +699,7 @@ public class MainActivity extends Activity {
             if (!autoMode || cancelled) return;
 
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "android-scanner-v4-auto");
+                UploadResult result = sendPayload(payload, "android-scanner-v5-auto");
 
                 runOnUiThread(() -> {
                     if (!autoMode || cancelled) return;
