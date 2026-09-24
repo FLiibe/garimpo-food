@@ -1,83 +1,67 @@
 import { getStore } from "@netlify/blobs";
 
-const FOOD_RE = /\b(marmita|pizza|hamb[uú]rguer|burger|combo|pastel|a[cç]a[ií]|sushi|prato|refei[cç][aã]o|lanche|frango|carne|hot dog|cachorro quente|esfiha|coxinha|tapioca|yakisoba|chicken|whopper|sand[uí]che|batata|nugget)\b/i;
-const ADDON_RE = /\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\b/i;
+const MAX_PRICE = 9.99;
+const FOOD_RE = /\b(combo|marmita|prato|refei[cç][aã]o|hamb[uú]rguer|hamburguer|burger|sandu[ií]che|lanche|chicken|whopper|frango|lingui[cç]a|carne|bife|costela|calabresa|pizza|pastel|esfiha|coxinha|hot[ -]?dog|cachorro[ -]?quente|yakisoba|sushi|temaki|poke|tapioca|cheeseburger|x[ -]?(burger|salada|bacon|frango))\b/i;
+const BLOCK_RE = /\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|adicionais|borda|extra|condimento|dip|acompanhamento|acompanhamentos)\b/i;
 
-function classify(item) {
-  const combined = `${item.product || ""} ${item.sourceText || ""}`;
-  const genericAddon = /^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$/i.test(String(item.product || "").trim());
-  if (genericAddon || ADDON_RE.test(combined)) return null;
-  const isFood = FOOD_RE.test(item.product || "");
-  const verified = Boolean(item.referencePrice && item.referencePrice > item.price && item.referenceSource);
-  const discount = verified
-    ? ((item.referencePrice - item.price) / item.referencePrice) * 100
-    : Number(item.discount || 0);
+function eligible(item) {
+  const price = Number(item?.price);
+  const product = String(item?.product || "");
+  return price > 0 && price <= MAX_PRICE && FOOD_RE.test(product) && !BLOCK_RE.test(product);
+}
 
-  let score = 18;
-  if (isFood) score += 15;
-
-  if (item.price <= 1) score += 55;
-  else if (item.price <= 3) score += 45;
-  else if (item.price <= 5) score += 35;
-  else if (item.price <= 10) score += 20;
-  else if (item.price <= 15) score += 8;
-
-  if (verified) {
-    if (discount >= 90) score += 35;
-    else if (discount >= 80) score += 30;
-    else if (discount >= 70) score += 25;
-    else if (discount >= 50) score += 18;
-    else if (discount >= 30) score += 10;
-  }
-
-  score = Math.max(0, Math.min(100, Math.round(score)));
-
-  let classification = "normal";
-  if (verified && discount >= 70) classification = "verified_extreme";
-  else if (verified && discount >= 40) classification = "verified_discount";
-  else if (isFood && item.price <= 3) classification = "extreme_price";
-  else if (isFood && item.price <= 5) classification = "very_low_price";
-  else if (score >= 70) classification = "interesting";
-
-  return {
-    ...item,
-    discount,
-    score,
-    classification,
-    verifiedDiscount: verified
-  };
+function category(product) {
+  const p=String(product||"");
+  if (/combo/i.test(p)) return "Combo";
+  if (/marmita|prato|refei[cç][aã]o|yakisoba/i.test(p)) return "Refeição";
+  if (/hamb|burger|sandu[ií]che|lanche|chicken|whopper|hot[ -]?dog|cachorro/i.test(p)) return "Lanche";
+  if (/frango|lingui[cç]a|carne|bife|costela|calabresa/i.test(p)) return "Carnes";
+  if (/pizza|pastel|esfiha|coxinha|tapioca/i.test(p)) return "Salgados";
+  if (/sushi|temaki|poke/i.test(p)) return "Japonês";
+  return "Até R$9,99";
 }
 
 export default async () => {
   try {
-    const store = getStore("garimpo-mobile-scans");
-    const index = (await store.get("index", { type:"json" }).catch(()=>null)) || [];
-    const recent = index.slice(0, 25);
-    const snapshots = await Promise.all(
-      recent.map(x => store.get("snapshot/" + x.id, { type:"json" }).catch(()=>null))
+    const store=getStore("garimpo-mobile-scans");
+    const index=(await store.get("index",{type:"json"}).catch(()=>null))||[];
+    const snapshots=await Promise.all(
+      index.slice(0,40).map(x=>store.get("snapshot/"+x.id,{type:"json"}).catch(()=>null))
     );
+    const cutoff=Date.now()-12*60*60*1000;
+    const map=new Map();
 
-    const cutoff = Date.now() - 12 * 60 * 60 * 1000;
-    const deals = snapshots
-      .filter(Boolean)
-      .filter(s => Date.parse(s.scannedAt) >= cutoff)
-      .flatMap(s => (s.items || []).map(item => classify({
-        ...item,
-        scannedAt: s.scannedAt,
-        restaurant: s.restaurant,
-        url: s.sourceUrl
-      })).filter(Boolean))
-      .sort((a,b) => (b.score||0)-(a.score||0) || (b.discount||0)-(a.discount||0) || a.price-b.price)
-      .slice(0, 200);
+    for (const s of snapshots.filter(Boolean)) {
+      if (Date.parse(s.scannedAt)<cutoff) continue;
+      for (const item of s.items||[]) {
+        if (!eligible(item)) continue;
+        const key=(s.restaurant+"|"+item.product).toLowerCase();
+        const row={
+          product:item.product,
+          price:Number(item.price),
+          restaurant:s.restaurant,
+          url:s.sourceUrl,
+          offerUrl:item.offerUrl||null,
+          category:category(item.product),
+          scannedAt:s.scannedAt
+        };
+        const old=map.get(key);
+        if (!old || Date.parse(row.scannedAt)>Date.parse(old.scannedAt)) map.set(key,row);
+      }
+    }
+
+    const deals=[...map.values()]
+      .sort((a,b)=>a.price-b.price || Date.parse(b.scannedAt)-Date.parse(a.scannedAt))
+      .slice(0,250);
 
     return Response.json({
       ok:true,
-      source:"android-scanner",
-      snapshots:snapshots.filter(Boolean).length,
+      source:"garimpo-999",
+      maxPrice:MAX_PRICE,
       deals,
       scannedAt:new Date().toISOString()
-    }, { headers:{ "cache-control":"no-store" } });
-  } catch (error) {
-    return Response.json({ ok:false, error:String(error), deals:[] }, { status:500 });
+    }, {headers:{"cache-control":"no-store"}});
+  } catch(error) {
+    return Response.json({ok:false,error:String(error),deals:[]},{status:500});
   }
 };
