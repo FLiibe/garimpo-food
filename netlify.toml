@@ -15,3 +15,14 @@
   for = "/sw.js"
   [headers.values]
     Cache-Control = "no-cache"
+
+
+[[headers]]
+  for = "/app.js"
+  [headers.values]
+    Cache-Control = "no-store"
+
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "no-store"
