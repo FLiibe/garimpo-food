@@ -50,7 +50,24 @@ export default async () => {
       }
     }
 
-    const deals=[...map.values()]
+    const reportStore=getStore("garimpo-missing-reports");
+    const cutoffReports=Date.now()-2*60*60*1000;
+    const checked=[];
+
+    for (const row of [...map.values()]) {
+      const id=(await import("node:crypto")).createHash("sha256")
+        .update((row.restaurant+"|"+row.product).toLowerCase())
+        .digest("hex")
+        .slice(0,32);
+      const reports=(await reportStore.get("report/"+id,{type:"json"}).catch(()=>null))||[];
+      const unique=new Set(
+        reports.filter(x=>Number(x.at)>=cutoffReports).map(x=>x.installId).filter(Boolean)
+      );
+      if (unique.size>=2) continue;
+      checked.push(row);
+    }
+
+    const deals=checked
       .sort((a,b)=>a.price-b.price || Date.parse(b.scannedAt)-Date.parse(a.scannedAt))
       .slice(0,250);
 
