@@ -1,8 +1,12 @@
 import { getStore } from "@netlify/blobs";
 
-const FOOD_RE = /\b(marmita|pizza|hamb[uú]rguer|burger|combo|pastel|a[cç]a[ií]|sushi|prato|refei[cç][aã]o|lanche|frango|carne|hot dog|cachorro quente|esfiha|coxinha|tapioca|yakisoba)\b/i;
+const FOOD_RE = /\b(marmita|pizza|hamb[uú]rguer|burger|combo|pastel|a[cç]a[ií]|sushi|prato|refei[cç][aã]o|lanche|frango|carne|hot dog|cachorro quente|esfiha|coxinha|tapioca|yakisoba|chicken|whopper|sand[uí]che|batata|nugget)\b/i;
+const ADDON_RE = /\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|borda|extra|condimento|dip)\b/i;
 
 function classify(item) {
+  const combined = `${item.product || ""} ${item.sourceText || ""}`;
+  const genericAddon = /^(acompanhamento|acompanhamentos|adicional|adicionais|molho|molhos)$/i.test(String(item.product || "").trim());
+  if (genericAddon || ADDON_RE.test(combined)) return null;
   const isFood = FOOD_RE.test(item.product || "");
   const verified = Boolean(item.referencePrice && item.referencePrice > item.price && item.referenceSource);
   const discount = verified
@@ -62,7 +66,7 @@ export default async () => {
         scannedAt: s.scannedAt,
         restaurant: s.restaurant,
         url: s.sourceUrl
-      })))
+      })).filter(Boolean))
       .sort((a,b) => (b.score||0)-(a.score||0) || (b.discount||0)-(a.discount||0) || a.price-b.price)
       .slice(0, 200);
 
