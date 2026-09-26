@@ -49,6 +49,14 @@ export default async (req) => {
     }
 
     const restaurant = cleanText(body.restaurant || body.pageTitle || "99Food", 120);
+    let restaurantAppUrl = cleanText(body.restaurantAppUrl, 500) || null;
+    if (restaurantAppUrl) {
+      try {
+        const u = new URL(restaurantAppUrl);
+        if (u.protocol !== "https:" || u.hostname !== "oia.99app.com" ||
+            !u.pathname.startsWith("/dlp9/")) restaurantAppUrl = null;
+      } catch { restaurantAppUrl = null; }
+    }
     const rawItems = Array.isArray(body.items) ? body.items.slice(0, MAX_ITEMS) : [];
     const best = new Map();
 
@@ -80,6 +88,7 @@ export default async (req) => {
       id:pageId,
       sourceUrl,
       restaurant,
+      restaurantAppUrl,
       scannedAt,
       scannerVersion:Number(body.scannerVersion || 6),
       client:cleanText(req.headers.get("x-garimpo-client") || "unknown", 50),
