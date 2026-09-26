@@ -42,6 +42,7 @@ export default async () => {
           restaurant:s.restaurant,
           url:s.sourceUrl,
           offerUrl:item.offerUrl||null,
+          restaurantAppUrl:s.restaurantAppUrl||null,
           category:category(item.product),
           scannedAt:s.scannedAt
         };
