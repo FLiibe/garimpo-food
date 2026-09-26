@@ -1,64 +1,117 @@
 <?xml version="1.0" encoding="utf-8"?>
-<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+<FrameLayout xmlns:android="http://schemas.android.com/apk/res/android"
     android:layout_width="match_parent"
-    android:layout_height="match_parent"
-    android:orientation="vertical"
-    android:padding="12dp">
-
-    <TextView
-        android:id="@+id/title"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Garimpo 9,99"
-        android:textStyle="bold"
-        android:textSize="24sp"
-        android:textColor="#111111" />
-
-    <TextView
-        android:id="@+id/status"
-        android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Comida de verdade por até R$9,99."
-        android:textSize="13sp"
-        android:textColor="#666666"
-        android:paddingTop="4dp"
-        android:paddingBottom="10dp" />
+    android:layout_height="match_parent">
 
     <LinearLayout
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:paddingBottom="8dp">
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:padding="12dp">
+
+        <TextView
+            android:id="@+id/title"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Garimpo 9,99"
+            android:textStyle="bold"
+            android:textSize="24sp"
+            android:textColor="#111111" />
+
+        <TextView
+            android:id="@+id/status"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Comida de verdade por até R$9,99."
+            android:textSize="13sp"
+            android:textColor="#666666"
+            android:paddingTop="4dp"
+            android:paddingBottom="10dp" />
+
+        <LinearLayout
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:orientation="horizontal"
+            android:paddingBottom="8dp">
+
+            <Button
+                android:id="@+id/locationButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Definir localização"
+                android:textAllCaps="false" />
+
+            <Button
+                android:id="@+id/garimpoButton"
+                android:layout_width="0dp"
+                android:layout_height="wrap_content"
+                android:layout_weight="1"
+                android:text="Ver achados"
+                android:textAllCaps="false" />
+        </LinearLayout>
 
         <Button
-            android:id="@+id/locationButton"
-            android:layout_width="0dp"
+            android:id="@+id/autoScanButton"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Definir localização"
-            android:textAllCaps="false" />
+            android:text="Escanear agora"
+            android:textAllCaps="false"
+            android:layout_marginBottom="8dp" />
 
-        <Button
-            android:id="@+id/garimpoButton"
-            android:layout_width="0dp"
-            android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:text="Ver achados"
-            android:textAllCaps="false" />
+        <WebView
+            android:id="@+id/webView"
+            android:layout_width="match_parent"
+            android:layout_height="0dp"
+            android:layout_weight="1" />
+
     </LinearLayout>
 
-    <Button
-        android:id="@+id/autoScanButton"
+    <LinearLayout
+        android:id="@+id/scanOverlay"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
-        android:text="Escanear agora"
-        android:textAllCaps="false"
-        android:layout_marginBottom="8dp" />
+        android:layout_height="match_parent"
+        android:orientation="vertical"
+        android:gravity="center"
+        android:background="#F2F2F2"
+        android:padding="36dp"
+        android:visibility="gone"
+        android:clickable="true"
+        android:focusable="true">
 
-    <WebView
-        android:id="@+id/webView"
-        android:layout_width="match_parent"
-        android:layout_height="0dp"
-        android:layout_weight="1" />
+        <ProgressBar
+            android:layout_width="56dp"
+            android:layout_height="56dp"
+            android:indeterminate="true" />
 
-</LinearLayout>
+        <TextView
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Garimpo 9,99"
+            android:textStyle="bold"
+            android:textSize="22sp"
+            android:textColor="#111111"
+            android:layout_marginTop="22dp" />
+
+        <TextView
+            android:id="@+id/scanOverlayText"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Procurando ofertas por até R$9,99..."
+            android:textSize="15sp"
+            android:textColor="#555555"
+            android:gravity="center"
+            android:layout_marginTop="8dp"
+            android:lineSpacingExtra="3dp" />
+
+        <Button
+            android:id="@+id/cancelScanButton"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Cancelar"
+            android:textAllCaps="false"
+            android:layout_marginTop="24dp" />
+
+    </LinearLayout>
+
+</FrameLayout>
