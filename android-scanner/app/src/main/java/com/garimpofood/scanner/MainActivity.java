@@ -205,13 +205,35 @@ public class MainActivity extends Activity {
         return true;
     }
 
-    private boolean openOfferIn99App(String url, String product) {
+    private String build99FoodStoreUrl(String sourceUrl) {
         try {
-            Intent intent99 = new Intent(Intent.ACTION_VIEW, Uri.parse(url));
+            Uri parsed = Uri.parse(sourceUrl);
+            List<String> segments = parsed.getPathSegments();
+
+            for (int i = segments.size() - 1; i >= 0; i--) {
+                String part = segments.get(i);
+                if (part != null && part.matches("\\d{12,}")) {
+                    return "https://www.didi-food.com/pt-BR/food/store/" +
+                            part +
+                            "?channel=19&pid=website_seo";
+                }
+            }
+        } catch (Exception ignored) {
+        }
+
+        return sourceUrl;
+    }
+
+    private boolean openOfferIn99App(String url, String product) {
+        String appUrl = build99FoodStoreUrl(url);
+
+        try {
+            Intent intent99 = new Intent(Intent.ACTION_VIEW, Uri.parse(appUrl));
             intent99.setPackage("com.taxis99");
             intent99.addCategory(Intent.CATEGORY_BROWSABLE);
             intent99.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             startActivity(intent99);
+
             pendingOfferName = null;
             pendingOfferUrl = null;
             status.setText("Abrindo " + product + " no app 99...");
