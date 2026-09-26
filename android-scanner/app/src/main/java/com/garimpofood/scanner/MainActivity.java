@@ -13,6 +13,7 @@ import android.webkit.WebSettings;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
+import android.view.View;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.TextView;
@@ -55,6 +56,9 @@ public class MainActivity extends Activity {
     private Button locationButton;
     private Button garimpoButton;
     private Button autoScanButton;
+    private Button cancelScanButton;
+    private View scanOverlay;
+    private TextView scanOverlayText;
     private SharedPreferences prefs;
 
     private final Handler handler = new Handler(Looper.getMainLooper());
@@ -85,6 +89,9 @@ public class MainActivity extends Activity {
         locationButton = findViewById(R.id.locationButton);
         garimpoButton = findViewById(R.id.garimpoButton);
         autoScanButton = findViewById(R.id.autoScanButton);
+        cancelScanButton = findViewById(R.id.cancelScanButton);
+        scanOverlay = findViewById(R.id.scanOverlay);
+        scanOverlayText = findViewById(R.id.scanOverlayText);
         prefs = getSharedPreferences("garimpo999", MODE_PRIVATE);
 
         WebSettings settings = webView.getSettings();
@@ -112,6 +119,7 @@ public class MainActivity extends Activity {
             public void onPageFinished(WebView view, String url) {
                 if (autoMode && discovering && isCityPage(url)) {
                     status.setText("Descobrindo restaurantes 99Food em São Paulo...");
+                    updateScanOverlay("Encontrando restaurantes perto da localização definida...");
                     handler.postDelayed(() -> {
                         if (autoMode && discovering && !cancelled) discoverRestaurantLinks();
                     }, 650);
@@ -125,6 +133,10 @@ public class MainActivity extends Activity {
                             shown + "/" + autoUrls.size() +
                             " — página carregada, lendo cardápio..."
                     );
+                    updateScanOverlay(
+                            "Analisando cardápios...\n" +
+                            shown + " de " + autoUrls.size() + " restaurantes"
+                    );
                     handler.postDelayed(() -> {
                         if (autoMode && !cancelled) scanCurrentPage(true);
                     }, PAGE_SETTLE_MS);
@@ -132,6 +144,7 @@ public class MainActivity extends Activity {
                 }
 
                 if (url != null && url.startsWith("https://garimpo.local/")) {
+                    hideScanOverlay();
                     status.setText("Garimpo 9,99 carregado.");
                     return;
                 }
@@ -165,6 +178,8 @@ public class MainActivity extends Activity {
             if (autoMode) cancelAutoScan();
             else startAutoScan();
         });
+
+        cancelScanButton.setOnClickListener(v -> cancelAutoScan());
 
         if (!handleIncomingOffer(getIntent())) {
             loadGarimpoFeed();
@@ -558,9 +573,10 @@ public class MainActivity extends Activity {
                         "https://garimpo.local/", html, "text/html", "UTF-8", null
                 ));
             } catch (Exception e) {
-                runOnUiThread(() ->
-                        status.setText("Falha ao carregar Garimpo: " + e.getMessage())
-                );
+                runOnUiThread(() -> {
+                    hideScanOverlay();
+                    status.setText("Falha ao carregar Garimpo: " + e.getMessage());
+                });
             } finally {
                 if (connection != null) connection.disconnect();
             }
@@ -576,6 +592,27 @@ public class MainActivity extends Activity {
     private void setManualControlsEnabled(boolean enabled) {
         locationButton.setEnabled(enabled);
         garimpoButton.setEnabled(enabled);
+    }
+
+    private void showScanOverlay(String message) {
+        if (scanOverlayText != null && message != null) {
+            scanOverlayText.setText(message);
+        }
+        if (scanOverlay != null) {
+            scanOverlay.setVisibility(View.VISIBLE);
+            scanOverlay.bringToFront();
+        }
+    }
+
+    private void updateScanOverlay(String message) {
+        if (scanOverlay != null && scanOverlay.getVisibility() == View.VISIBLE &&
+                scanOverlayText != null && message != null) {
+            scanOverlayText.setText(message);
+        }
+    }
+
+    private void hideScanOverlay() {
+        if (scanOverlay != null) scanOverlay.setVisibility(View.GONE);
     }
 
     private void startAutoScan() {
@@ -594,6 +631,7 @@ public class MainActivity extends Activity {
         setManualControlsEnabled(false);
         autoScanButton.setText("Parar varredura");
         status.setText("Abrindo 99Food São Paulo para descobrir restaurantes...");
+        showScanOverlay("Preparando a busca por ofertas até R$9,99...");
         webView.loadUrl(CITY_URL);
     }
 
@@ -604,6 +642,7 @@ public class MainActivity extends Activity {
         waitingForRestaurantPage = false;
         autoScanButton.setText("Escanear agora");
         setManualControlsEnabled(true);
+        hideScanOverlay();
         status.setText(
                 "Varredura interrompida. " +
                 autoSuccess + " restaurantes enviados, " +
@@ -617,6 +656,7 @@ public class MainActivity extends Activity {
         waitingForRestaurantPage = false;
         autoScanButton.setText("Escanear agora");
         setManualControlsEnabled(true);
+        updateScanOverlay("Busca concluída. Preparando os achados...");
         status.setText(
                 "Concluído: " + autoSuccess + "/" + autoUrls.size() +
                 " restaurantes, " + autoProducts +
@@ -681,6 +721,10 @@ public class MainActivity extends Activity {
         status.setText(
                 (autoIndex + 1) + "/" + autoUrls.size() +
                 " — abrindo restaurante..."
+        );
+        updateScanOverlay(
+                "Procurando ofertas por até R$9,99...\n" +
+                (autoIndex + 1) + " de " + autoUrls.size() + " restaurantes"
         );
 
         webView.loadUrl(url);
@@ -997,6 +1041,7 @@ public class MainActivity extends Activity {
                         discovering = false;
                         autoScanButton.setText("Escanear agora");
                         setManualControlsEnabled(true);
+                        hideScanOverlay();
                         status.setText(
                                 "Nenhum restaurante foi encontrado na página de São Paulo."
                         );
@@ -1021,6 +1066,7 @@ public class MainActivity extends Activity {
                     discovering = false;
                     autoScanButton.setText("Escanear agora");
                     setManualControlsEnabled(true);
+                    hideScanOverlay();
                     status.setText(
                             "Falha ao ler a lista de restaurantes: " + e.getMessage()
                     );
@@ -1078,6 +1124,10 @@ public class MainActivity extends Activity {
                         status.setText(
                                 autoIndex + "/" + autoUrls.size() +
                                 " concluídos. Continuando..."
+                        );
+                        updateScanOverlay(
+                                "Procurando ofertas por até R$9,99...\n" +
+                                autoIndex + " de " + autoUrls.size() + " restaurantes analisados"
                         );
 
                         handler.postDelayed(
