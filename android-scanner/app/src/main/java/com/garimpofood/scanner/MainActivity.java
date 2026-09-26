@@ -69,6 +69,7 @@ public class MainActivity extends Activity {
     private int autoSuccess = 0;
     private int autoFailed = 0;
     private int autoProducts = 0;
+    private int autoDirectLinks = 0;
 
     private String pendingOfferName = null;
     private String pendingOfferUrl = null;
@@ -179,6 +180,7 @@ public class MainActivity extends Activity {
 
         String url = data.getQueryParameter("url");
         String product = data.getQueryParameter("product");
+        String appUrl = data.getQueryParameter("appUrl");
 
         if (url == null || product == null) return false;
 
@@ -194,42 +196,34 @@ public class MainActivity extends Activity {
             return false;
         }
 
-        if (openOfferIn99App(url, product.trim())) {
+        if (isValid99AppLink(appUrl) && open99AppLink(appUrl, product.trim())) {
             return true;
         }
 
         pendingOfferName = product.trim();
         pendingOfferUrl = url;
-        status.setText("App 99 não abriu o link. Usando visualização interna...");
+        status.setText("Link direto do app 99 não disponível. Abrindo cardápio...");
         webView.loadUrl(url);
         return true;
     }
 
-    private String build99FoodStoreUrl(String sourceUrl) {
+    private boolean isValid99AppLink(String appUrl) {
+        if (appUrl == null || appUrl.isEmpty()) return false;
         try {
-            Uri parsed = Uri.parse(sourceUrl);
-            List<String> segments = parsed.getPathSegments();
-
-            for (int i = segments.size() - 1; i >= 0; i--) {
-                String part = segments.get(i);
-                if (part != null && part.matches("\\d{12,}")) {
-                    return "https://www.didi-food.com/pt-BR/food/store/" +
-                            part +
-                            "?channel=19&pid=website_seo";
-                }
-            }
+            Uri u = Uri.parse(appUrl);
+            String host = u.getHost();
+            String path = u.getPath();
+            return "https".equalsIgnoreCase(u.getScheme()) &&
+                    "oia.99app.com".equalsIgnoreCase(host) &&
+                    path != null && path.startsWith("/dlp9/");
         } catch (Exception ignored) {
+            return false;
         }
-
-        return sourceUrl;
     }
 
-    private boolean openOfferIn99App(String url, String product) {
-        String appUrl = build99FoodStoreUrl(url);
-
+    private boolean open99AppLink(String appUrl, String product) {
         try {
             Intent intent99 = new Intent(Intent.ACTION_VIEW, Uri.parse(appUrl));
-            intent99.setPackage("com.taxis99");
             intent99.addCategory(Intent.CATEGORY_BROWSABLE);
             intent99.addFlags(Intent.FLAG_ACTIVITY_CLEAR_TOP);
             startActivity(intent99);
@@ -237,6 +231,48 @@ public class MainActivity extends Activity {
             pendingOfferName = null;
             pendingOfferUrl = null;
             status.setText("Abrindo " + product + " no app 99...");
+            return true;
+        } catch (Exception ignored) {
+            return false;
+        }
+    }
+
+    private String restaurantKeyFromUrl(String url) {
+        if (url == null) return null;
+        try {
+            Uri parsed = Uri.parse(url);
+            List<String> segments = parsed.getPathSegments();
+            for (int i = segments.size() - 1; i >= 0; i--) {
+                String part = segments.get(i);
+                if (part != null && part.matches("\\d{12,}")) {
+                    return "restaurant_app_" + part;
+                }
+            }
+        } catch (Exception ignored) {
+        }
+        return null;
+    }
+
+    private void rememberRestaurantAppLink(String sourceUrl, String appUrl) {
+        if (!isValid99AppLink(appUrl)) return;
+        String key = restaurantKeyFromUrl(sourceUrl);
+        if (key != null) prefs.edit().putString(key, appUrl).apply();
+    }
+
+    private String getRestaurantAppLink(String sourceUrl) {
+        String key = restaurantKeyFromUrl(sourceUrl);
+        if (key == null) return null;
+        String value = prefs.getString(key, null);
+        return isValid99AppLink(value) ? value : null;
+    }
+
+    private boolean rememberAppLinkFromPayload(String payload) {
+        try {
+            JSONObject p = new JSONObject(payload);
+            String sourceUrl = p.optString("sourceUrl", "");
+            String appUrl = p.optString("restaurantAppUrl", "");
+            if (!isValid99AppLink(appUrl)) return false;
+            rememberRestaurantAppLink(sourceUrl, appUrl);
             return true;
         } catch (Exception ignored) {
             return false;
@@ -431,7 +467,11 @@ public class MainActivity extends Activity {
                         String restaurant = d.optString("restaurant", "99Food");
                         if (isLocallyHidden(restaurant, product)) continue;
 
-                        String restaurantUrl = d.optString("offerUrl", d.optString("url", ""));
+                        String sourceUrl = d.optString("url", "");
+                        String restaurantUrl = d.optString("offerUrl", sourceUrl);
+                        String appUrl = d.optString("restaurantAppUrl", "");
+                        if (!isValid99AppLink(appUrl)) appUrl = getRestaurantAppLink(sourceUrl);
+                        if (!isValid99AppLink(appUrl)) appUrl = getRestaurantAppLink(restaurantUrl);
                         String scannedAt = d.optString("scannedAt", "");
                         long age = now - scannedAtMillis(scannedAt);
                         if (age > maxAge) continue;
@@ -439,12 +479,15 @@ public class MainActivity extends Activity {
                         String category = categoryLocal(product);
                         String fresh = freshnessText(age);
 
-                        Uri deepLink = new Uri.Builder()
+                        Uri.Builder deepLinkBuilder = new Uri.Builder()
                                 .scheme("garimpo")
                                 .authority("offer")
                                 .appendQueryParameter("url", restaurantUrl)
-                                .appendQueryParameter("product", product)
-                                .build();
+                                .appendQueryParameter("product", product);
+                        if (isValid99AppLink(appUrl)) {
+                            deepLinkBuilder.appendQueryParameter("appUrl", appUrl);
+                        }
+                        Uri deepLink = deepLinkBuilder.build();
 
                         cards.append("<article class='card' data-price='")
                                 .append(price)
@@ -546,6 +589,7 @@ public class MainActivity extends Activity {
         autoSuccess = 0;
         autoFailed = 0;
         autoProducts = 0;
+        autoDirectLinks = 0;
 
         setManualControlsEnabled(false);
         autoScanButton.setText("Parar varredura");
@@ -576,7 +620,8 @@ public class MainActivity extends Activity {
         status.setText(
                 "Concluído: " + autoSuccess + "/" + autoUrls.size() +
                 " restaurantes, " + autoProducts +
-                " achados. Carregando resultados..."
+                " achados, " + autoDirectLinks +
+                " links diretos 99. Carregando resultados..."
         );
         handler.postDelayed(this::loadGarimpoFeed, 600);
     }
@@ -668,6 +713,53 @@ public class MainActivity extends Activity {
               const allPrices = text => Array.from((text || '').matchAll(priceRe))
                 .map(m => toNumber(m[1]))
                 .filter(n => Number.isFinite(n) && n > 0 && n < 1000);
+
+              function extractOia(text) {
+                const s = String(text || '');
+                const marker = 'https://oia.99app.com/dlp9/';
+                const i = s.indexOf(marker);
+                if (i < 0) return null;
+                let e = i + marker.length;
+                while (e < s.length) {
+                  const ch = s[e];
+                  if (ch === ' ' || ch === '"' || ch === "'" ||
+                      ch === '<' || ch === '>' || ch === '\\n' ||
+                      ch === '\\r' || ch === '\\t') break;
+                  e++;
+                }
+                const found = s.slice(i, e).replace(/&amp;/g, '&');
+                return found.length > marker.length ? found : null;
+              }
+
+              function findRestaurantAppLink() {
+                for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                  const found = extractOia(a.href);
+                  if (found) return found;
+                }
+
+                for (const el of Array.from(document.querySelectorAll('*'))) {
+                  for (const attr of Array.from(el.attributes || [])) {
+                    const found = extractOia(attr.value);
+                    if (found) return found;
+                  }
+                }
+
+                for (const script of Array.from(document.scripts || [])) {
+                  const found = extractOia(script.textContent);
+                  if (found) return found;
+                }
+
+                try {
+                  for (const entry of performance.getEntriesByType('resource')) {
+                    const found = extractOia(entry.name);
+                    if (found) return found;
+                  }
+                } catch {}
+
+                return null;
+              }
+
+              const restaurantAppUrl = findRestaurantAppLink();
 
               const badName = /^(adicionar|escolher|ver mais|a partir de|indispon[ií]vel|novo|promo[cç][aã]o)$/i;
               const addon = /\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|adicionais|borda|extra|condimento|dip|acompanhamento|acompanhamentos)\\b/i;
@@ -816,10 +908,11 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.__CALL__(JSON.stringify({
-                scannerVersion: 61,
+                scannerVersion: 73,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
+                restaurantAppUrl,
                 items
               }));
             })();
@@ -937,9 +1030,14 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void report(String payload) {
-            runOnUiThread(() -> status.setText("Enviando dados para Garimpo..."));
+            boolean directLinkFound = rememberAppLinkFromPayload(payload);
+            runOnUiThread(() -> status.setText(
+                    directLinkFound
+                            ? "Link direto do app 99 encontrado. Enviando achados..."
+                            : "Enviando dados para Garimpo..."
+            ));
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "garimpo-999-v6-manual");
+                UploadResult result = sendPayload(payload, "garimpo-999-v7-manual");
 
                 runOnUiThread(() -> {
                     if (result.success) {
@@ -957,8 +1055,9 @@ public class MainActivity extends Activity {
         public void reportAuto(String payload) {
             if (!autoMode || cancelled) return;
 
+            boolean directLinkFound = rememberAppLinkFromPayload(payload);
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "garimpo-999-v6-auto");
+                UploadResult result = sendPayload(payload, "garimpo-999-v7-auto");
 
                 runOnUiThread(() -> {
                     if (!autoMode || cancelled) return;
@@ -966,6 +1065,7 @@ public class MainActivity extends Activity {
                     if (result.success) {
                         autoSuccess++;
                         autoProducts += result.accepted;
+                        if (directLinkFound) autoDirectLinks++;
                     } else {
                         autoFailed++;
                     }
