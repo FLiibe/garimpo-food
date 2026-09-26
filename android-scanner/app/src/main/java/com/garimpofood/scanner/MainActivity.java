@@ -47,9 +47,9 @@ public class MainActivity extends Activity {
     private static final String CITY_URL =
             "https://99app.com/99food/sao-paulo/";
 
-    private static final int AUTO_MAX_RESTAURANTS = 12;
+    private static final int AUTO_MAX_RESTAURANTS = 20;
     private static final long AUTO_DELAY_MS = 700;
-    private static final long PAGE_SETTLE_MS = 650;
+    private static final long PAGE_SETTLE_MS = 800;
 
     private WebView webView;
     private TextView status;
@@ -73,7 +73,6 @@ public class MainActivity extends Activity {
     private int autoSuccess = 0;
     private int autoFailed = 0;
     private int autoProducts = 0;
-    private int autoDirectLinks = 0;
 
     private String pendingOfferName = null;
     private String pendingOfferUrl = null;
@@ -134,7 +133,7 @@ public class MainActivity extends Activity {
                             " — página carregada, lendo cardápio..."
                     );
                     updateScanOverlay(
-                            "Analisando cardápios...\n" +
+                            "Analisando cardápios por completo...\n" +
                             shown + " de " + autoUrls.size() + " restaurantes"
                     );
                     handler.postDelayed(() -> {
@@ -217,7 +216,7 @@ public class MainActivity extends Activity {
 
         pendingOfferName = product.trim();
         pendingOfferUrl = url;
-        status.setText("Link direto do app 99 não disponível. Abrindo cardápio...");
+        status.setText("Abrindo a oferta no 99Food...");
         webView.loadUrl(url);
         return true;
     }
@@ -626,7 +625,6 @@ public class MainActivity extends Activity {
         autoSuccess = 0;
         autoFailed = 0;
         autoProducts = 0;
-        autoDirectLinks = 0;
 
         setManualControlsEnabled(false);
         autoScanButton.setText("Parar varredura");
@@ -660,8 +658,7 @@ public class MainActivity extends Activity {
         status.setText(
                 "Concluído: " + autoSuccess + "/" + autoUrls.size() +
                 " restaurantes, " + autoProducts +
-                " achados, " + autoDirectLinks +
-                " links diretos 99. Carregando resultados..."
+                " achados. Carregando resultados..."
         );
         handler.postDelayed(this::loadGarimpoFeed, 600);
     }
@@ -731,25 +728,11 @@ public class MainActivity extends Activity {
     }
 
     private String buildScanScript(boolean automatic) {
-        String preScroll = automatic
-                ? """
-                  const sleep = ms => new Promise(r => setTimeout(r, ms));
-                  window.scrollTo(0, 0);
-                  await sleep(120);
-                  for (let i = 0; i < 3; i++) {
-                    window.scrollBy(0, Math.max(650, window.innerHeight * 0.9));
-                    await sleep(180);
-                  }
-                  await sleep(160);
-                  """
-                : "";
-
         String callback = automatic ? "reportAuto" : "report";
 
         return """
             (async function() {
-              __PRE_SCROLL__
-
+              const sleep = ms => new Promise(r => setTimeout(r, ms));
               const clean = s => (s || '').replace(/\\s+/g, ' ').trim();
               const priceRe = /R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})/g;
               const onePriceRe = /R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})/;
@@ -757,53 +740,6 @@ public class MainActivity extends Activity {
               const allPrices = text => Array.from((text || '').matchAll(priceRe))
                 .map(m => toNumber(m[1]))
                 .filter(n => Number.isFinite(n) && n > 0 && n < 1000);
-
-              function extractOia(text) {
-                const s = String(text || '');
-                const marker = 'https://oia.99app.com/dlp9/';
-                const i = s.indexOf(marker);
-                if (i < 0) return null;
-                let e = i + marker.length;
-                while (e < s.length) {
-                  const ch = s[e];
-                  if (ch === ' ' || ch === '"' || ch === "'" ||
-                      ch === '<' || ch === '>' || ch === '\\n' ||
-                      ch === '\\r' || ch === '\\t') break;
-                  e++;
-                }
-                const found = s.slice(i, e).replace(/&amp;/g, '&');
-                return found.length > marker.length ? found : null;
-              }
-
-              function findRestaurantAppLink() {
-                for (const a of Array.from(document.querySelectorAll('a[href]'))) {
-                  const found = extractOia(a.href);
-                  if (found) return found;
-                }
-
-                for (const el of Array.from(document.querySelectorAll('*'))) {
-                  for (const attr of Array.from(el.attributes || [])) {
-                    const found = extractOia(attr.value);
-                    if (found) return found;
-                  }
-                }
-
-                for (const script of Array.from(document.scripts || [])) {
-                  const found = extractOia(script.textContent);
-                  if (found) return found;
-                }
-
-                try {
-                  for (const entry of performance.getEntriesByType('resource')) {
-                    const found = extractOia(entry.name);
-                    if (found) return found;
-                  }
-                } catch {}
-
-                return null;
-              }
-
-              const restaurantAppUrl = findRestaurantAppLink();
 
               const badName = /^(adicionar|escolher|ver mais|a partir de|indispon[ií]vel|novo|promo[cç][aã]o)$/i;
               const addon = /\\b(molho|maionese|mayo|ketchup|mostarda|barbecue|bbq|shoyu|hashi|talher|guardanapo|embalagem|sach[eê]|adicional|adicionais|borda|extra|condimento|dip|acompanhamento|acompanhamentos)\\b/i;
@@ -870,76 +806,115 @@ public class MainActivity extends Activity {
                 return fallback;
               }
 
-              const priceElements =
-                Array.from(document.querySelectorAll('body *')).filter(el => {
-                  if (!isVisible(el)) return false;
-
-                  const own = clean(
-                    Array.from(el.childNodes)
-                      .filter(n => n.nodeType === 3)
-                      .map(n => n.textContent)
-                      .join(' ')
-                  );
-
-                  return onePriceRe.test(own) && own.length <= 80;
-                });
-
               const byKey = new Map();
 
-              for (const priceEl of priceElements) {
-                const own = clean(priceEl.innerText);
-                const ownMatch = own.match(onePriceRe);
-                if (!ownMatch) continue;
+              function collectVisibleItems() {
+                const priceElements =
+                  Array.from(document.querySelectorAll('body *')).filter(el => {
+                    if (!isVisible(el)) return false;
 
-                const ownPrice = toNumber(ownMatch[1]);
-                if (!(ownPrice > 0 && ownPrice < 1000)) continue;
+                    const own = clean(
+                      Array.from(el.childNodes)
+                        .filter(n => n.nodeType === 3)
+                        .map(n => n.textContent)
+                        .join(' ')
+                    );
 
-                const card = findCard(priceEl);
-                if (!card) continue;
+                    return onePriceRe.test(own) && own.length <= 80;
+                  });
 
-                const product = nameFromCard(card);
-                if (!product || product.length < 2) continue;
+                for (const priceEl of priceElements) {
+                  const own = clean(priceEl.innerText);
+                  const ownMatch = own.match(onePriceRe);
+                  if (!ownMatch) continue;
 
-                const prices = allPrices(card.innerText);
-                if (!prices.length) continue;
+                  const ownPrice = toNumber(ownMatch[1]);
+                  if (!(ownPrice > 0 && ownPrice < 1000)) continue;
 
-                const promoPrice = Math.min(...prices);
-                if (!(promoPrice > 0 && promoPrice <= 9.99)) continue;
-                if (addon.test(product) || !food.test(product)) continue;
+                  const card = findCard(priceEl);
+                  if (!card) continue;
 
-                const normalized = product
-                  .toLowerCase()
-                  .normalize('NFD')
-                  .replace(/[\\u0300-\\u036f]/g, '')
-                  .replace(/[^a-z0-9]+/g, ' ')
-                  .trim();
+                  const product = nameFromCard(card);
+                  if (!product || product.length < 2) continue;
 
-                const sourceText = clean(card.innerText).slice(0, 320);
-                if (!normalized) continue;
+                  const prices = allPrices(card.innerText);
+                  if (!prices.length) continue;
 
-                let offerUrl = null;
-                const nearestLink = card.closest('a[href]') || card.querySelector('a[href]');
-                if (nearestLink) {
-                  try {
-                    const u = new URL(nearestLink.href, location.href);
-                    if ((u.hostname === '99app.com' || u.hostname === 'www.99app.com') &&
-                        u.pathname.includes('/99food/')) {
-                      offerUrl = u.href;
-                    }
-                  } catch {}
-                }
+                  const promoPrice = Math.min(...prices);
+                  if (!(promoPrice > 0 && promoPrice <= 9.99)) continue;
+                  if (addon.test(product) || !food.test(product)) continue;
 
-                const item = {
-                  product,
-                  price: promoPrice,
-                  offerUrl
-                };
+                  const normalized = product
+                    .toLowerCase()
+                    .normalize('NFD')
+                    .replace(/[\\u0300-\\u036f]/g, '')
+                    .replace(/[^a-z0-9]+/g, ' ')
+                    .trim();
 
-                const old = byKey.get(normalized);
-                if (!old || item.price < old.price) {
-                  byKey.set(normalized, item);
+                  if (!normalized) continue;
+
+                  let offerUrl = null;
+                  const nearestLink = card.closest('a[href]') || card.querySelector('a[href]');
+                  if (nearestLink) {
+                    try {
+                      const u = new URL(nearestLink.href, location.href);
+                      if ((u.hostname === '99app.com' || u.hostname === 'www.99app.com') &&
+                          u.pathname.includes('/99food/')) {
+                        offerUrl = u.href;
+                      }
+                    } catch {}
+                  }
+
+                  const item = {
+                    product,
+                    price: promoPrice,
+                    offerUrl
+                  };
+
+                  const old = byKey.get(normalized);
+                  if (!old || item.price < old.price) {
+                    byKey.set(normalized, item);
+                  } else if (old && !old.offerUrl && item.offerUrl) {
+                    old.offerUrl = item.offerUrl;
+                  }
                 }
               }
+
+              const scroller = document.scrollingElement || document.documentElement;
+              window.scrollTo(0, 0);
+              await sleep(180);
+              collectVisibleItems();
+
+              let stablePasses = 0;
+              let previousY = -1;
+              let previousHeight = 0;
+
+              for (let step = 0; step < 18; step++) {
+                const viewport = Math.max(520, window.innerHeight * 0.72);
+                window.scrollBy(0, viewport);
+                await sleep(220);
+                collectVisibleItems();
+
+                const y = Math.round(window.scrollY || scroller.scrollTop || 0);
+                const height = Math.max(
+                  scroller.scrollHeight || 0,
+                  document.body?.scrollHeight || 0
+                );
+                const atBottom = y + window.innerHeight >= height - 20;
+                const noMovement = Math.abs(y - previousY) < 8;
+                const noGrowth = Math.abs(height - previousHeight) < 8;
+
+                if (atBottom && noMovement && noGrowth) stablePasses++;
+                else stablePasses = 0;
+
+                previousY = y;
+                previousHeight = height;
+
+                if (stablePasses >= 2) break;
+              }
+
+              await sleep(180);
+              collectVisibleItems();
 
               const items = Array.from(byKey.values())
                 .sort((a, b) => a.price - b.price)
@@ -952,16 +927,14 @@ public class MainActivity extends Activity {
                 '99Food';
 
               GarimpoAndroid.__CALL__(JSON.stringify({
-                scannerVersion: 73,
+                scannerVersion: 80,
                 sourceUrl: location.href,
                 pageTitle: document.title,
                 restaurant,
-                restaurantAppUrl,
                 items
               }));
             })();
             """
-                .replace("__PRE_SCROLL__", preScroll)
                 .replace("__CALL__", callback);
     }
 
@@ -1076,14 +1049,9 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void report(String payload) {
-            boolean directLinkFound = rememberAppLinkFromPayload(payload);
-            runOnUiThread(() -> status.setText(
-                    directLinkFound
-                            ? "Link direto do app 99 encontrado. Enviando achados..."
-                            : "Enviando dados para Garimpo..."
-            ));
+            runOnUiThread(() -> status.setText("Enviando dados para Garimpo..."));
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "garimpo-999-v7-manual");
+                UploadResult result = sendPayload(payload, "garimpo-999-v8-manual");
 
                 runOnUiThread(() -> {
                     if (result.success) {
@@ -1101,9 +1069,8 @@ public class MainActivity extends Activity {
         public void reportAuto(String payload) {
             if (!autoMode || cancelled) return;
 
-            boolean directLinkFound = rememberAppLinkFromPayload(payload);
             new Thread(() -> {
-                UploadResult result = sendPayload(payload, "garimpo-999-v7-auto");
+                UploadResult result = sendPayload(payload, "garimpo-999-v8-auto");
 
                 runOnUiThread(() -> {
                     if (!autoMode || cancelled) return;
@@ -1111,7 +1078,6 @@ public class MainActivity extends Activity {
                     if (result.success) {
                         autoSuccess++;
                         autoProducts += result.accepted;
-                        if (directLinkFound) autoDirectLinks++;
                     } else {
                         autoFailed++;
                     }
