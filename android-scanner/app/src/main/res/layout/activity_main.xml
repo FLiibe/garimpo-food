@@ -63,7 +63,7 @@
             android:id="@+id/coverageButton"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:text="Testar catálogo"
+            android:text="Escanear catálogo"
             android:textAllCaps="false"
             android:layout_marginBottom="8dp" />
 
