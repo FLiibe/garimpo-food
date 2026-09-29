@@ -667,37 +667,63 @@ public class MainActivity extends Activity {
         String script = """
             (async function() {
               const sleep = ms => new Promise(r => setTimeout(r, ms));
-
-              for (let i = 0; i < 4; i++) {
-                window.scrollBy(0, Math.max(700, window.innerHeight * 0.9));
-                await sleep(220);
-              }
-
-              await sleep(220);
-
               const seen = new Set();
               const links = [];
 
-              for (const a of Array.from(document.querySelectorAll('a[href]'))) {
-                let u;
-                try { u = new URL(a.href, location.href); } catch { continue; }
+              function collectRestaurantLinks() {
+                for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                  let u;
+                  try { u = new URL(a.href, location.href); } catch { continue; }
 
-                if (u.hostname !== '99app.com' && u.hostname !== 'www.99app.com') continue;
+                  if (u.hostname !== '99app.com' && u.hostname !== 'www.99app.com') continue;
 
-                const cleanPath = u.pathname.replace(/\\/+/g, '/');
-                if (!/^\\/99food\\/sao-paulo\\/[^/]+\\/\\d+\\/?$/.test(cleanPath)) continue;
+                  const cleanPath = u.pathname.replace(/\\/+/g, '/');
+                  if (!/^\\/99food\\/sao-paulo\\/[^/]+\\/\\d+\\/?$/.test(cleanPath)) continue;
 
-                const normalized = 'https://99app.com' +
-                  (cleanPath.endsWith('/') ? cleanPath : cleanPath + '/');
+                  const normalized = 'https://99app.com' +
+                    (cleanPath.endsWith('/') ? cleanPath : cleanPath + '/');
 
-                if (seen.has(normalized)) continue;
-                seen.add(normalized);
-                links.push(normalized);
+                  if (seen.has(normalized)) continue;
+                  seen.add(normalized);
+                  links.push(normalized);
 
-                if (links.length >= 40) break;
+                  if (links.length >= 20) return;
+                }
               }
 
-              GarimpoAndroid.reportRestaurantLinks(JSON.stringify(links));
+              const scroller = document.scrollingElement || document.documentElement;
+              window.scrollTo(0, 0);
+              await sleep(180);
+              collectRestaurantLinks();
+
+              let stablePasses = 0;
+              let previousCount = links.length;
+              let previousHeight = 0;
+
+              for (let step = 0; step < 18 && links.length < 20; step++) {
+                window.scrollBy(0, Math.max(700, window.innerHeight * 0.85));
+                await sleep(260);
+                collectRestaurantLinks();
+
+                const height = Math.max(
+                  scroller.scrollHeight || 0,
+                  document.body?.scrollHeight || 0
+                );
+                const countStable = links.length === previousCount;
+                const heightStable = Math.abs(height - previousHeight) < 8;
+                const atBottom =
+                  (window.scrollY || scroller.scrollTop || 0) + window.innerHeight >= height - 20;
+
+                if (countStable && heightStable && atBottom) stablePasses++;
+                else stablePasses = 0;
+
+                previousCount = links.length;
+                previousHeight = height;
+
+                if (stablePasses >= 2) break;
+              }
+
+              GarimpoAndroid.reportRestaurantLinks(JSON.stringify(links.slice(0, 20)));
             })();
             """;
 
