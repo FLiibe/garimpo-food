@@ -83,7 +83,7 @@ public class MainActivity extends Activity {
     private int coveragePageIndex = 0;
     private int directMenuRead = 0;
     private int directMenuWithDeals = 0;
-    private int directDealsSent = 0;
+    private int directDealsSaved = 0;
     private int directMenuFailed = 0;
 
     private String pendingOfferName = null;
@@ -472,8 +472,213 @@ public class MainActivity extends Activity {
         }).start();
     }
 
+    private static final String LOCAL_DEALS_KEY = "local_deals_v1";
+
+    private synchronized int saveLocalDeals(JSONObject payload) {
+        try {
+            JSONArray incoming = payload.optJSONArray("items");
+            if (incoming == null || incoming.length() == 0) return 0;
+
+            String restaurant = payload.optString("restaurant", "99Food");
+            String sourceUrl = payload.optString("sourceUrl", "");
+            long now = System.currentTimeMillis();
+
+            JSONArray existing;
+            try {
+                existing = new JSONArray(prefs.getString(LOCAL_DEALS_KEY, "[]"));
+            } catch (Exception ignored) {
+                existing = new JSONArray();
+            }
+
+            java.util.LinkedHashMap<String, JSONObject> merged =
+                    new java.util.LinkedHashMap<>();
+
+            for (int i = 0; i < existing.length(); i++) {
+                JSONObject d = existing.optJSONObject(i);
+                if (d == null) continue;
+                String key = (
+                        d.optString("restaurant", "") + "|" +
+                        d.optString("product", "")
+                ).toLowerCase(Locale.ROOT);
+                merged.put(key, d);
+            }
+
+            int added = 0;
+
+            for (int i = 0; i < incoming.length(); i++) {
+                JSONObject item = incoming.optJSONObject(i);
+                if (item == null) continue;
+
+                String product = item.optString("product", "").trim();
+                double price = item.optDouble("price", 0);
+                if (!isEligibleFoodLocal(product, price)) continue;
+
+                JSONObject d = new JSONObject();
+                d.put("product", product);
+                d.put("price", price);
+                d.put("restaurant", restaurant);
+                d.put("url", sourceUrl);
+                d.put("offerUrl", item.optString("offerUrl", sourceUrl));
+                d.put("scannedAtMs", now);
+
+                String key = (restaurant + "|" + product).toLowerCase(Locale.ROOT);
+                merged.put(key, d);
+                added++;
+            }
+
+            List<JSONObject> values = new ArrayList<>(merged.values());
+            values.sort((a, b) ->
+                    Long.compare(
+                            b.optLong("scannedAtMs", 0L),
+                            a.optLong("scannedAtMs", 0L)
+                    )
+            );
+
+            JSONArray out = new JSONArray();
+            int max = Math.min(values.size(), 600);
+            for (int i = 0; i < max; i++) out.put(values.get(i));
+
+            prefs.edit().putString(LOCAL_DEALS_KEY, out.toString()).apply();
+            return added;
+        } catch (Exception ignored) {
+            return 0;
+        }
+    }
+
+    private JSONArray getLocalDeals() {
+        try {
+            return new JSONArray(prefs.getString(LOCAL_DEALS_KEY, "[]"));
+        } catch (Exception ignored) {
+            return new JSONArray();
+        }
+    }
+
+    private void renderDeals(JSONArray deals, String sourceLabel) {
+        try {
+            StringBuilder cards = new StringBuilder();
+            int shown = 0;
+            long now = System.currentTimeMillis();
+            long maxAge = 90L * 60L * 1000L;
+
+            if (deals != null) {
+                for (int i = 0; i < deals.length() && shown < 180; i++) {
+                    JSONObject d = deals.optJSONObject(i);
+                    if (d == null) continue;
+
+                    String product = d.optString("product", "").trim();
+                    double price = d.optDouble("price", 0);
+                    if (!isEligibleFoodLocal(product, price)) continue;
+
+                    String restaurant = d.optString("restaurant", "99Food");
+                    if (isLocallyHidden(restaurant, product)) continue;
+
+                    String sourceUrl = d.optString("url", "");
+                    String restaurantUrl = d.optString("offerUrl", sourceUrl);
+
+                    long scannedAtMs = d.optLong("scannedAtMs", 0L);
+                    if (scannedAtMs <= 0) {
+                        String scannedAt = d.optString("scannedAt", "");
+                        scannedAtMs = scannedAtMillis(scannedAt);
+                    }
+
+                    long age = Math.max(0, now - scannedAtMs);
+                    if (age > maxAge) continue;
+
+                    String category = categoryLocal(product);
+                    String fresh = freshnessText(age);
+
+                    Uri deepLink = new Uri.Builder()
+                            .scheme("garimpo")
+                            .authority("offer")
+                            .appendQueryParameter("url", restaurantUrl)
+                            .appendQueryParameter("product", product)
+                            .build();
+
+                    cards.append("<article class='card' data-price='")
+                            .append(price)
+                            .append("' data-cat='")
+                            .append(htmlEscape(category))
+                            .append("' data-product='")
+                            .append(htmlEscape(product))
+                            .append("' data-restaurant='")
+                            .append(htmlEscape(restaurant))
+                            .append("' data-url='")
+                            .append(htmlEscape(restaurantUrl))
+                            .append("'>")
+                            .append("<div class='top'><b>")
+                            .append(htmlEscape(category))
+                            .append("</b><span>")
+                            .append(htmlEscape(fresh))
+                            .append("</span></div>")
+                            .append("<h2>")
+                            .append(htmlEscape(product))
+                            .append("</h2>")
+                            .append("<p class='restaurant'>")
+                            .append(htmlEscape(restaurant))
+                            .append("</p>")
+                            .append("<div class='price'>")
+                            .append(htmlEscape(money(price)))
+                            .append("</div>")
+                            .append("<p class='detail'>Preço encontrado no 99Food</p>")
+                            .append("<a class='open' href='")
+                            .append(htmlEscape(deepLink.toString()))
+                            .append("'>Ver oferta</a>")
+                            .append("<button class='report' onclick='reportMissing(this)'>Não encontrei esta oferta</button>")
+                            .append("</article>");
+
+                    shown++;
+                }
+            }
+
+            String empty = shown == 0
+                    ? "<div class='empty'>Nenhum achado recente até R$9,99. Faça uma nova varredura.</div>"
+                    : "";
+
+            String html = "<!doctype html><html><head>" +
+                    "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
+                    "<style>" +
+                    "*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:14px}" +
+                    "header{margin-bottom:14px}small{color:#666;font-weight:800;letter-spacing:.12em}.subtitle{color:#555;margin:4px 0 0;font-size:14px}" +
+                    ".filters{display:flex;gap:7px;overflow:auto;padding:7px 0}.pill{border:0;border-radius:999px;padding:9px 12px;white-space:nowrap;background:#e7e3da;font-weight:700}.pill.on{background:#111;color:#fff}" +
+                    ".card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}.top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666;text-transform:none}" +
+                    "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:30px;font-weight:800}.detail{font-size:13px;color:#555}" +
+                    ".open{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
+                    ".report{display:block;width:100%;border:0;background:transparent;color:#777;padding:11px 4px 2px;font-size:12px}.empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
+                    "</style></head><body>" +
+                    "<header><small>GARIMPO 9,99</small><h1>Comida de verdade por até R$9,99</h1>" +
+                    "<p class='subtitle'>Achados recentes " + htmlEscape(sourceLabel) + ".</p></header>" +
+                    "<div class='filters priceFilters'>" +
+                    "<button class='pill' data-max='.99'>Até R$0,99</button><button class='pill' data-max='4.99'>Até R$4,99</button><button class='pill on' data-max='9.99'>Até R$9,99</button></div>" +
+                    "<div class='filters catFilters'>" +
+                    "<button class='pill on' data-cat='Todos'>Todos</button><button class='pill' data-cat='Refeições'>Refeições</button><button class='pill' data-cat='Lanches'>Lanches</button><button class='pill' data-cat='Carnes'>Carnes</button><button class='pill' data-cat='Pizza/Pastel'>Pizza/Pastel</button></div>" +
+                    "<main id='cards'>" + cards + empty + "</main>" +
+                    "<script>" +
+                    "let max=9.99,cat='Todos';" +
+                    "function apply(){document.querySelectorAll('.card').forEach(c=>{const ok=Number(c.dataset.price)<=max&&(cat==='Todos'||c.dataset.cat===cat);c.style.display=ok?'block':'none'})}" +
+                    "document.querySelectorAll('.priceFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.priceFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');max=Number(b.dataset.max);apply()});" +
+                    "document.querySelectorAll('.catFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.catFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');cat=b.dataset.cat;apply()});" +
+                    "function reportMissing(btn){const c=btn.closest('.card');GarimpoAndroid.reportMissing(JSON.stringify({product:c.dataset.product,restaurant:c.dataset.restaurant,url:c.dataset.url}));c.remove();}" +
+                    "</script></body></html>";
+
+            runOnUiThread(() -> webView.loadDataWithBaseURL(
+                    "https://garimpo.local/", html, "text/html", "UTF-8", null
+            ));
+        } catch (Exception e) {
+            runOnUiThread(() -> {
+                hideScanOverlay();
+                status.setText("Falha ao carregar achados locais: " + e.getMessage());
+            });
+        }
+    }
+
     private void loadGarimpoFeed() {
         status.setText("Carregando achados até R$9,99...");
+
+        JSONArray local = getLocalDeals();
+        if (local.length() > 0) {
+            renderDeals(local, "salvos neste aparelho");
+            return;
+        }
 
         new Thread(() -> {
             HttpURLConnection connection = null;
@@ -481,8 +686,8 @@ public class MainActivity extends Activity {
                 URL url = new URL(DEALS_URL + "?t=" + System.currentTimeMillis());
                 connection = (HttpURLConnection) url.openConnection();
                 connection.setRequestMethod("GET");
-                connection.setConnectTimeout(10000);
-                connection.setReadTimeout(15000);
+                connection.setConnectTimeout(3500);
+                connection.setReadTimeout(5000);
                 connection.setRequestProperty("Accept", "application/json");
 
                 int code = connection.getResponseCode();
@@ -491,122 +696,16 @@ public class MainActivity extends Activity {
                                 ? connection.getInputStream()
                                 : connection.getErrorStream()
                 );
-                if (code < 200 || code >= 300) throw new Exception("HTTP " + code);
+
+                if (code < 200 || code >= 300) {
+                    throw new Exception("HTTP " + code);
+                }
 
                 JSONObject json = new JSONObject(body);
                 JSONArray deals = json.optJSONArray("deals");
-                StringBuilder cards = new StringBuilder();
-                int shown = 0;
-                long now = System.currentTimeMillis();
-                long maxAge = 90L * 60L * 1000L;
-
-                if (deals != null) {
-                    for (int i = 0; i < deals.length() && shown < 120; i++) {
-                        JSONObject d = deals.optJSONObject(i);
-                        if (d == null) continue;
-
-                        String product = d.optString("product", "").trim();
-                        double price = d.optDouble("price", 0);
-                        if (!isEligibleFoodLocal(product, price)) continue;
-
-                        String restaurant = d.optString("restaurant", "99Food");
-                        if (isLocallyHidden(restaurant, product)) continue;
-
-                        String sourceUrl = d.optString("url", "");
-                        String restaurantUrl = d.optString("offerUrl", sourceUrl);
-                        String appUrl = d.optString("restaurantAppUrl", "");
-                        if (!isValid99AppLink(appUrl)) appUrl = getRestaurantAppLink(sourceUrl);
-                        if (!isValid99AppLink(appUrl)) appUrl = getRestaurantAppLink(restaurantUrl);
-                        String scannedAt = d.optString("scannedAt", "");
-                        long age = now - scannedAtMillis(scannedAt);
-                        if (age > maxAge) continue;
-
-                        String category = categoryLocal(product);
-                        String fresh = freshnessText(age);
-
-                        Uri.Builder deepLinkBuilder = new Uri.Builder()
-                                .scheme("garimpo")
-                                .authority("offer")
-                                .appendQueryParameter("url", restaurantUrl)
-                                .appendQueryParameter("product", product);
-                        if (isValid99AppLink(appUrl)) {
-                            deepLinkBuilder.appendQueryParameter("appUrl", appUrl);
-                        }
-                        Uri deepLink = deepLinkBuilder.build();
-
-                        cards.append("<article class='card' data-price='")
-                                .append(price)
-                                .append("' data-cat='")
-                                .append(htmlEscape(category))
-                                .append("' data-product='")
-                                .append(htmlEscape(product))
-                                .append("' data-restaurant='")
-                                .append(htmlEscape(restaurant))
-                                .append("' data-url='")
-                                .append(htmlEscape(restaurantUrl))
-                                .append("'>")
-                                .append("<div class='top'><b>")
-                                .append(htmlEscape(category))
-                                .append("</b><span>")
-                                .append(htmlEscape(fresh))
-                                .append("</span></div>")
-                                .append("<h2>")
-                                .append(htmlEscape(product))
-                                .append("</h2>")
-                                .append("<p class='restaurant'>")
-                                .append(htmlEscape(restaurant))
-                                .append("</p>")
-                                .append("<div class='price'>")
-                                .append(htmlEscape(money(price)))
-                                .append("</div>")
-                                .append("<p class='detail'>Preço encontrado agora no 99Food</p>")
-                                .append("<a class='open' href='")
-                                .append(htmlEscape(deepLink.toString()))
-                                .append("'>Ver oferta</a>")
-                                .append("<button class='report' onclick='reportMissing(this)'>Não encontrei esta oferta</button>")
-                                .append("</article>");
-
-                        shown++;
-                    }
-                }
-
-                String empty = shown == 0
-                        ? "<div class='empty'>Nenhum achado recente até R$9,99. Faça uma nova varredura.</div>"
-                        : "";
-
-                String html = "<!doctype html><html><head>" +
-                        "<meta name='viewport' content='width=device-width,initial-scale=1'>" +
-                        "<style>" +
-                        "*{box-sizing:border-box}body{font-family:Arial,sans-serif;background:#f4f2ed;color:#111;margin:0;padding:14px}" +
-                        "header{margin-bottom:14px}small{color:#666;font-weight:800;letter-spacing:.12em}.subtitle{color:#555;margin:4px 0 0;font-size:14px}" +
-                        ".filters{display:flex;gap:7px;overflow:auto;padding:7px 0}.pill{border:0;border-radius:999px;padding:9px 12px;white-space:nowrap;background:#e7e3da;font-weight:700}.pill.on{background:#111;color:#fff}" +
-                        ".card{background:#fff;border:1px solid #ddd8cd;border-radius:18px;padding:16px;margin:0 0 12px}.top{display:flex;justify-content:space-between;gap:10px;font-size:12px;text-transform:uppercase}.top span{color:#666;text-transform:none}" +
-                        "h2{font-size:19px;margin:12px 0 4px}.restaurant{color:#666;margin:0 0 12px}.price{font-size:30px;font-weight:800}.detail{font-size:13px;color:#555}" +
-                        ".open{display:block;background:#111;color:#fff;text-decoration:none;text-align:center;padding:13px;border-radius:12px;font-weight:800;margin-top:12px}" +
-                        ".report{display:block;width:100%;border:0;background:transparent;color:#777;padding:11px 4px 2px;font-size:12px}.empty{background:#fff;padding:24px;border-radius:16px;text-align:center;color:#666}" +
-                        "</style></head><body>" +
-                        "<header><small>GARIMPO 9,99</small><h1>Comida de verdade por até R$9,99</h1><p class='subtitle'>Achados recentes na localização definida no 99Food.</p></header>" +
-                        "<div class='filters priceFilters'>" +
-                        "<button class='pill' data-max='.99'>Até R$0,99</button><button class='pill' data-max='4.99'>Até R$4,99</button><button class='pill on' data-max='9.99'>Até R$9,99</button></div>" +
-                        "<div class='filters catFilters'>" +
-                        "<button class='pill on' data-cat='Todos'>Todos</button><button class='pill' data-cat='Refeições'>Refeições</button><button class='pill' data-cat='Lanches'>Lanches</button><button class='pill' data-cat='Carnes'>Carnes</button><button class='pill' data-cat='Pizza/Pastel'>Pizza/Pastel</button></div>" +
-                        "<main id='cards'>" + cards + empty + "</main>" +
-                        "<script>" +
-                        "let max=9.99,cat='Todos';" +
-                        "function apply(){document.querySelectorAll('.card').forEach(c=>{const ok=Number(c.dataset.price)<=max&&(cat==='Todos'||c.dataset.cat===cat);c.style.display=ok?'block':'none'})}" +
-                        "document.querySelectorAll('.priceFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.priceFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');max=Number(b.dataset.max);apply()});" +
-                        "document.querySelectorAll('.catFilters .pill').forEach(b=>b.onclick=()=>{document.querySelectorAll('.catFilters .pill').forEach(x=>x.classList.remove('on'));b.classList.add('on');cat=b.dataset.cat;apply()});" +
-                        "function reportMissing(btn){const c=btn.closest('.card');GarimpoAndroid.reportMissing(JSON.stringify({product:c.dataset.product,restaurant:c.dataset.restaurant,url:c.dataset.url}));c.remove();}" +
-                        "</script></body></html>";
-
-                runOnUiThread(() -> webView.loadDataWithBaseURL(
-                        "https://garimpo.local/", html, "text/html", "UTF-8", null
-                ));
-            } catch (Exception e) {
-                runOnUiThread(() -> {
-                    hideScanOverlay();
-                    status.setText("Falha ao carregar Garimpo: " + e.getMessage());
-                });
+                renderDeals(deals == null ? new JSONArray() : deals, "do Garimpo");
+            } catch (Exception ignored) {
+                renderDeals(new JSONArray(), "salvos neste aparelho");
             } finally {
                 if (connection != null) connection.disconnect();
             }
@@ -652,7 +751,7 @@ public class MainActivity extends Activity {
         coveragePageIndex = 0;
         directMenuRead = 0;
         directMenuWithDeals = 0;
-        directDealsSent = 0;
+        directDealsSaved = 0;
         directMenuFailed = 0;
         directMenuTestRunning = false;
         coveragePageUrls.clear();
@@ -814,14 +913,8 @@ public class MainActivity extends Activity {
                         if (found > 0) {
                             directMenuWithDeals++;
 
-                            UploadResult upload = sendPayload(
-                                    payload.toString(),
-                                    "garimpo-999-v10-direct"
-                            );
-
-                            if (upload.success) {
-                                directDealsSent += upload.accepted;
-                            }
+                            int saved = saveLocalDeals(payload);
+                            directDealsSaved += saved;
                         }
                     } else {
                         directMenuFailed++;
@@ -948,7 +1041,7 @@ public class MainActivity extends Activity {
 
         if (openResults) {
             status.setText(
-                    directDealsSent + " achados encontrados. Carregando resultados..."
+                    directDealsSaved + " achados salvos. Carregando resultados..."
             );
             updateScanOverlay("Carregando achados...");
             handler.postDelayed(this::loadGarimpoFeed, 700);
