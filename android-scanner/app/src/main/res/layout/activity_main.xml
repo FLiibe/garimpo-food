@@ -57,6 +57,14 @@
             android:layout_height="wrap_content"
             android:text="Escanear agora"
             android:textAllCaps="false"
+            android:layout_marginBottom="6dp" />
+
+        <Button
+            android:id="@+id/coverageButton"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Testar cobertura"
+            android:textAllCaps="false"
             android:layout_marginBottom="8dp" />
 
         <WebView
