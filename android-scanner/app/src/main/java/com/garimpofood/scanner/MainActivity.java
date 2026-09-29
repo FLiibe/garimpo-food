@@ -52,7 +52,6 @@ public class MainActivity extends Activity {
     private static final int AUTO_MAX_RESTAURANTS = 20;
     private static final long AUTO_DELAY_MS = 700;
     private static final long PAGE_SETTLE_MS = 800;
-    private static final int DIRECT_MENU_TEST_LIMIT = 50;
 
     private WebView webView;
     private TextView status;
@@ -83,7 +82,8 @@ public class MainActivity extends Activity {
     private int autoProducts = 0;
     private int coveragePageIndex = 0;
     private int directMenuRead = 0;
-    private int directMenuCheap = 0;
+    private int directMenuWithDeals = 0;
+    private int directDealsSent = 0;
     private int directMenuFailed = 0;
 
     private String pendingOfferName = null;
@@ -156,10 +156,7 @@ public class MainActivity extends Activity {
                             shown + "/" + autoUrls.size() +
                             " — página carregada, lendo cardápio..."
                     );
-                    updateScanOverlay(
-                            "Analisando cardápios por completo...\n" +
-                            shown + " de " + autoUrls.size() + " restaurantes"
-                    );
+                    updateScanOverlay("Procurando ofertas por até R$9,99...");
                     handler.postDelayed(() -> {
                         if (autoMode && !cancelled) scanCurrentPage(true);
                     }, PAGE_SETTLE_MS);
@@ -654,7 +651,8 @@ public class MainActivity extends Activity {
         cancelled = false;
         coveragePageIndex = 0;
         directMenuRead = 0;
-        directMenuCheap = 0;
+        directMenuWithDeals = 0;
+        directDealsSent = 0;
         directMenuFailed = 0;
         directMenuTestRunning = false;
         coveragePageUrls.clear();
@@ -674,10 +672,7 @@ public class MainActivity extends Activity {
         garimpoButton.setEnabled(false);
         autoScanButton.setEnabled(false);
         coverageButton.setText("Cancelar teste");
-        showScanOverlay(
-                "Mapeando catálogo público do 99Food...\n" +
-                "0 de " + coveragePageUrls.size() + " páginas"
-        );
+        showScanOverlay("Procurando ofertas por até R$9,99...");
         loadNextCoveragePage();
     }
 
@@ -689,12 +684,7 @@ public class MainActivity extends Activity {
             return;
         }
 
-        updateScanOverlay(
-                "Mapeando restaurantes...\n" +
-                (coveragePageIndex + 1) + " de " + coveragePageUrls.size() +
-                " páginas\n" +
-                coverageRestaurantUrls.size() + " restaurantes únicos encontrados"
-        );
+        updateScanOverlay("Procurando ofertas por até R$9,99...");
 
         webView.loadUrl(coveragePageUrls.get(coveragePageIndex));
     }
@@ -769,31 +759,23 @@ public class MainActivity extends Activity {
 
         directMenuTestRunning = true;
         int total = coverageRestaurantUrls.size();
+
         if (total == 0) {
             directMenuTestRunning = false;
-            finishCatalogTest("Nenhum restaurante foi encontrado.");
+            finishCatalogScan(false);
             return;
         }
 
-        updateScanOverlay(
-                total + " restaurantes únicos encontrados.\n" +
-                "Agora testando leitura direta de até " +
-                Math.min(DIRECT_MENU_TEST_LIMIT, total) + " cardápios..."
-        );
-
-        new Thread(this::runDirectMenuTest).start();
+        updateScanOverlay("Procurando ofertas por até R$9,99...");
+        new Thread(this::runDirectCatalogScan).start();
     }
 
-    private void runDirectMenuTest() {
+    private void runDirectCatalogScan() {
         List<String> urls = new ArrayList<>(coverageRestaurantUrls);
-        int limit = Math.min(DIRECT_MENU_TEST_LIMIT, urls.size());
 
-        for (int i = 0; i < limit; i++) {
+        for (String restaurantUrl : urls) {
             if (!coverageMode || cancelled) return;
 
-            String restaurantUrl = urls.get(i);
-            boolean read = false;
-            boolean cheap = false;
             HttpURLConnection connection = null;
 
             try {
@@ -814,35 +796,51 @@ public class MainActivity extends Activity {
                 connection.setRequestProperty("Referer", CITY_URL);
 
                 int code = connection.getResponseCode();
+
                 if (code >= 200 && code < 300) {
                     String html = readResponse(connection.getInputStream());
+
                     if (html != null && html.length() > 500) {
-                        read = true;
-                        cheap = htmlHasCheapPrice(html);
+                        directMenuRead++;
+
+                        JSONObject payload = extractDealsFromRestaurantHtml(
+                                html,
+                                restaurantUrl
+                        );
+
+                        JSONArray items = payload.optJSONArray("items");
+                        int found = items == null ? 0 : items.length();
+
+                        if (found > 0) {
+                            directMenuWithDeals++;
+
+                            UploadResult upload = sendPayload(
+                                    payload.toString(),
+                                    "garimpo-999-v10-direct"
+                            );
+
+                            if (upload.success) {
+                                directDealsSent += upload.accepted;
+                            }
+                        }
+                    } else {
+                        directMenuFailed++;
                     }
+                } else {
+                    directMenuFailed++;
                 }
             } catch (Exception ignored) {
+                directMenuFailed++;
             } finally {
                 if (connection != null) connection.disconnect();
             }
 
-            if (read) {
-                directMenuRead++;
-                if (cheap) directMenuCheap++;
-            } else {
-                directMenuFailed++;
-            }
-
-            final int shown = i + 1;
-            runOnUiThread(() -> updateScanOverlay(
-                    "Lendo cardápios diretamente...\n" +
-                    shown + " de " + limit + "\n" +
-                    directMenuRead + " lidos • " +
-                    directMenuCheap + " com preço até R$9,99"
-            ));
+            runOnUiThread(() ->
+                    updateScanOverlay("Procurando ofertas por até R$9,99...")
+            );
 
             try {
-                Thread.sleep(180);
+                Thread.sleep(140);
             } catch (InterruptedException ignored) {
                 Thread.currentThread().interrupt();
                 break;
@@ -850,67 +848,126 @@ public class MainActivity extends Activity {
         }
 
         if (!coverageMode || cancelled) return;
-
-        runOnUiThread(() -> finishCatalogTest(
-                coverageRestaurantUrls.size() + " restaurantes únicos. " +
-                directMenuRead + "/" +
-                Math.min(DIRECT_MENU_TEST_LIMIT, coverageRestaurantUrls.size()) +
-                " cardápios lidos diretamente; " +
-                directMenuCheap + " tinham preço até R$9,99."
-        ));
+        runOnUiThread(() -> finishCatalogScan(true));
     }
 
-    private boolean htmlHasCheapPrice(String html) {
-        if (html == null || html.isEmpty()) return false;
+    private JSONObject extractDealsFromRestaurantHtml(
+            String html,
+            String restaurantUrl
+    ) throws Exception {
+        JSONObject payload = new JSONObject();
+        JSONArray items = new JSONArray();
 
-        String normalized = html
-                .replace("&nbsp;", " ")
-                .replace("&#36;", "$")
-                .replace("&dollar;", "$");
-
-        Pattern pricePattern = Pattern.compile(
-                "R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})",
-                Pattern.CASE_INSENSITIVE
-        );
-        Matcher matcher = pricePattern.matcher(normalized);
-
-        while (matcher.find()) {
-            try {
-                double value = Double.parseDouble(
-                        matcher.group(1).replace(".", "").replace(",", ".")
-                );
-                if (value > 0 && value <= 9.99) return true;
-            } catch (Exception ignored) {
-            }
+        String restaurant = extractFirstHtmlTag(html, "h1");
+        if (restaurant == null || restaurant.isEmpty()) {
+            restaurant = "99Food";
         }
-        return false;
+
+        Pattern productPattern = Pattern.compile(
+                "(?is)<h4[^>]*>(.*?)</h4>(.{0,1400}?)" +
+                "R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})"
+        );
+
+        Matcher matcher = productPattern.matcher(html);
+        LinkedHashSet<String> seen = new LinkedHashSet<>();
+
+        while (matcher.find() && items.length() < 100) {
+            String product = cleanHtmlText(matcher.group(1));
+            if (product.isEmpty()) continue;
+
+            double price;
+            try {
+                price = Double.parseDouble(
+                        matcher.group(3).replace(".", "").replace(",", ".")
+                );
+            } catch (Exception ignored) {
+                continue;
+            }
+
+            if (!isEligibleFoodLocal(product, price)) continue;
+
+            String key = product.toLowerCase(Locale.ROOT)
+                    .replaceAll("[^a-z0-9áàâãéêíóôõúüç]+", " ")
+                    .trim();
+
+            if (key.isEmpty() || seen.contains(key)) continue;
+            seen.add(key);
+
+            JSONObject item = new JSONObject();
+            item.put("product", product);
+            item.put("price", price);
+            item.put("offerUrl", restaurantUrl);
+            items.put(item);
+        }
+
+        payload.put("scannerVersion", 100);
+        payload.put("sourceUrl", restaurantUrl);
+        payload.put("pageTitle", restaurant);
+        payload.put("restaurant", restaurant);
+        payload.put("items", items);
+
+        return payload;
     }
 
-    private void finishCatalogTest(String message) {
+    private String extractFirstHtmlTag(String html, String tag) {
+        try {
+            Pattern p = Pattern.compile(
+                    "(?is)<" + tag + "[^>]*>(.*?)</" + tag + ">"
+            );
+            Matcher m = p.matcher(html);
+            if (m.find()) return cleanHtmlText(m.group(1));
+        } catch (Exception ignored) {
+        }
+        return "";
+    }
+
+    private String cleanHtmlText(String value) {
+        if (value == null) return "";
+
+        return value
+                .replaceAll("(?is)<[^>]+>", " ")
+                .replace("&nbsp;", " ")
+                .replace("&amp;", "&")
+                .replace("&quot;", "\"")
+                .replace("&#39;", "'")
+                .replace("&apos;", "'")
+                .replace("&lt;", "<")
+                .replace("&gt;", ">")
+                .replaceAll("&#(\\d+);", " ")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    private void finishCatalogScan(boolean openResults) {
         directMenuTestRunning = false;
         coverageMode = false;
-        coverageButton.setText("Testar catálogo");
+        coverageButton.setText("Escanear catálogo");
         autoScanButton.setEnabled(true);
         locationButton.setEnabled(true);
         garimpoButton.setEnabled(true);
-        hideScanOverlay();
-        status.setText("Teste concluído: " + message);
+
+        if (openResults) {
+            status.setText(
+                    directDealsSent + " achados encontrados. Carregando resultados..."
+            );
+            updateScanOverlay("Carregando achados...");
+            handler.postDelayed(this::loadGarimpoFeed, 700);
+        } else {
+            hideScanOverlay();
+            status.setText("Nenhum restaurante foi encontrado.");
+        }
     }
 
     private void cancelCoverageTest() {
         cancelled = true;
         directMenuTestRunning = false;
         coverageMode = false;
-        coverageButton.setText("Testar catálogo");
+        coverageButton.setText("Escanear catálogo");
         autoScanButton.setEnabled(true);
         locationButton.setEnabled(true);
         garimpoButton.setEnabled(true);
         hideScanOverlay();
-        status.setText(
-                "Teste interrompido: " + coverageRestaurantUrls.size() +
-                " restaurantes únicos; " + directMenuRead +
-                " cardápios lidos diretamente."
-        );
+        status.setText("Varredura interrompida.");
     }
 
     private void startAutoScan() {
@@ -1044,10 +1101,7 @@ public class MainActivity extends Activity {
                 (autoIndex + 1) + "/" + autoUrls.size() +
                 " — abrindo restaurante..."
         );
-        updateScanOverlay(
-                "Procurando ofertas por até R$9,99...\n" +
-                (autoIndex + 1) + " de " + autoUrls.size() + " restaurantes"
-        );
+        updateScanOverlay("Procurando ofertas por até R$9,99...");
 
         webView.loadUrl(url);
     }
@@ -1331,12 +1385,7 @@ public class MainActivity extends Activity {
 
                     coveragePageIndex++;
 
-                    updateScanOverlay(
-                            "Mapeando restaurantes...\n" +
-                            coveragePageIndex + " de " + coveragePageUrls.size() +
-                            " páginas concluídas\n" +
-                            coverageRestaurantUrls.size() + " restaurantes únicos encontrados"
-                    );
+                    updateScanOverlay("Procurando ofertas por até R$9,99...");
 
                     handler.postDelayed(
                             MainActivity.this::loadNextCoveragePage,
@@ -1459,10 +1508,7 @@ public class MainActivity extends Activity {
                                 autoIndex + "/" + autoUrls.size() +
                                 " concluídos. Continuando..."
                         );
-                        updateScanOverlay(
-                                "Procurando ofertas por até R$9,99...\n" +
-                                autoIndex + " de " + autoUrls.size() + " restaurantes analisados"
-                        );
+                        updateScanOverlay("Procurando ofertas por até R$9,99...");
 
                         handler.postDelayed(
                                 MainActivity.this::scanNextRestaurant,
