@@ -34,6 +34,8 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.UUID;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 public class MainActivity extends Activity {
     private static final String INGEST_URL =
@@ -50,6 +52,7 @@ public class MainActivity extends Activity {
     private static final int AUTO_MAX_RESTAURANTS = 20;
     private static final long AUTO_DELAY_MS = 700;
     private static final long PAGE_SETTLE_MS = 800;
+    private static final int DIRECT_MENU_TEST_LIMIT = 50;
 
     private WebView webView;
     private TextView status;
@@ -78,6 +81,9 @@ public class MainActivity extends Activity {
     private int autoFailed = 0;
     private int autoProducts = 0;
     private int coveragePageIndex = 0;
+    private int directMenuRead = 0;
+    private int directMenuCheap = 0;
+    private int directMenuFailed = 0;
 
     private String pendingOfferName = null;
     private String pendingOfferUrl = null;
@@ -643,6 +649,9 @@ public class MainActivity extends Activity {
         coverageMode = true;
         cancelled = false;
         coveragePageIndex = 0;
+        directMenuRead = 0;
+        directMenuCheap = 0;
+        directMenuFailed = 0;
         coveragePageUrls.clear();
         coverageRestaurantUrls.clear();
 
@@ -661,7 +670,7 @@ public class MainActivity extends Activity {
         autoScanButton.setEnabled(false);
         coverageButton.setText("Cancelar teste");
         showScanOverlay(
-                "Testando cobertura pública do 99Food...\n" +
+                "Mapeando catálogo público do 99Food...\n" +
                 "0 de " + coveragePageUrls.size() + " páginas"
         );
         loadNextCoveragePage();
@@ -751,31 +760,147 @@ public class MainActivity extends Activity {
     }
 
     private void finishCoverageTest() {
+        if (!coverageMode || cancelled) return;
+
+        int total = coverageRestaurantUrls.size();
+        if (total == 0) {
+            finishCatalogTest("Nenhum restaurante foi encontrado.");
+            return;
+        }
+
+        updateScanOverlay(
+                total + " restaurantes únicos encontrados.\n" +
+                "Agora testando leitura direta de até " +
+                Math.min(DIRECT_MENU_TEST_LIMIT, total) + " cardápios..."
+        );
+
+        new Thread(this::runDirectMenuTest).start();
+    }
+
+    private void runDirectMenuTest() {
+        List<String> urls = new ArrayList<>(coverageRestaurantUrls);
+        int limit = Math.min(DIRECT_MENU_TEST_LIMIT, urls.size());
+
+        for (int i = 0; i < limit; i++) {
+            if (!coverageMode || cancelled) return;
+
+            String restaurantUrl = urls.get(i);
+            boolean read = false;
+            boolean cheap = false;
+            HttpURLConnection connection = null;
+
+            try {
+                connection = (HttpURLConnection) new URL(restaurantUrl).openConnection();
+                connection.setRequestMethod("GET");
+                connection.setInstanceFollowRedirects(true);
+                connection.setConnectTimeout(9000);
+                connection.setReadTimeout(12000);
+                connection.setRequestProperty(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 16; Mobile) AppleWebKit/537.36 Chrome/140 Safari/537.36"
+                );
+                connection.setRequestProperty(
+                        "Accept",
+                        "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+                );
+                connection.setRequestProperty("Accept-Language", "pt-BR,pt;q=0.9");
+                connection.setRequestProperty("Referer", CITY_URL);
+
+                int code = connection.getResponseCode();
+                if (code >= 200 && code < 300) {
+                    String html = readResponse(connection.getInputStream());
+                    if (html != null && html.length() > 500) {
+                        read = true;
+                        cheap = htmlHasCheapPrice(html);
+                    }
+                }
+            } catch (Exception ignored) {
+            } finally {
+                if (connection != null) connection.disconnect();
+            }
+
+            if (read) {
+                directMenuRead++;
+                if (cheap) directMenuCheap++;
+            } else {
+                directMenuFailed++;
+            }
+
+            final int shown = i + 1;
+            runOnUiThread(() -> updateScanOverlay(
+                    "Lendo cardápios diretamente...\n" +
+                    shown + " de " + limit + "\n" +
+                    directMenuRead + " lidos • " +
+                    directMenuCheap + " com preço até R$9,99"
+            ));
+
+            try {
+                Thread.sleep(180);
+            } catch (InterruptedException ignored) {
+                Thread.currentThread().interrupt();
+                break;
+            }
+        }
+
+        if (!coverageMode || cancelled) return;
+
+        runOnUiThread(() -> finishCatalogTest(
+                coverageRestaurantUrls.size() + " restaurantes únicos. " +
+                directMenuRead + "/" +
+                Math.min(DIRECT_MENU_TEST_LIMIT, coverageRestaurantUrls.size()) +
+                " cardápios lidos diretamente; " +
+                directMenuCheap + " tinham preço até R$9,99."
+        ));
+    }
+
+    private boolean htmlHasCheapPrice(String html) {
+        if (html == null || html.isEmpty()) return false;
+
+        String normalized = html
+                .replace("&nbsp;", " ")
+                .replace("&#36;", "$")
+                .replace("&dollar;", "$");
+
+        Pattern pricePattern = Pattern.compile(
+                "R\\$\\s*([0-9]{1,4}(?:\\.[0-9]{3})*,[0-9]{2})",
+                Pattern.CASE_INSENSITIVE
+        );
+        Matcher matcher = pricePattern.matcher(normalized);
+
+        while (matcher.find()) {
+            try {
+                double value = Double.parseDouble(
+                        matcher.group(1).replace(".", "").replace(",", ".")
+                );
+                if (value > 0 && value <= 9.99) return true;
+            } catch (Exception ignored) {
+            }
+        }
+        return false;
+    }
+
+    private void finishCatalogTest(String message) {
         coverageMode = false;
-        coverageButton.setText("Testar cobertura");
+        coverageButton.setText("Testar catálogo");
         autoScanButton.setEnabled(true);
         locationButton.setEnabled(true);
         garimpoButton.setEnabled(true);
         hideScanOverlay();
-
-        int total = coverageRestaurantUrls.size();
-        status.setText(
-                "Teste concluído: " + total +
-                " restaurantes únicos em Marmita, Lanches e Pizza."
-        );
+        status.setText("Teste concluído: " + message);
     }
 
     private void cancelCoverageTest() {
         cancelled = true;
         coverageMode = false;
-        coverageButton.setText("Testar cobertura");
+        coverageButton.setText("Testar catálogo");
         autoScanButton.setEnabled(true);
         locationButton.setEnabled(true);
         garimpoButton.setEnabled(true);
         hideScanOverlay();
         status.setText(
                 "Teste interrompido: " + coverageRestaurantUrls.size() +
-                " restaurantes únicos encontrados."
+                " restaurantes únicos; " + directMenuRead +
+                " cardápios lidos diretamente."
         );
     }
 
