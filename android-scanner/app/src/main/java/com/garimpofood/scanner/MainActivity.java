@@ -56,6 +56,7 @@ public class MainActivity extends Activity {
     private Button locationButton;
     private Button garimpoButton;
     private Button autoScanButton;
+    private Button coverageButton;
     private Button cancelScanButton;
     private View scanOverlay;
     private TextView scanOverlayText;
@@ -63,8 +64,11 @@ public class MainActivity extends Activity {
 
     private final Handler handler = new Handler(Looper.getMainLooper());
     private final List<String> autoUrls = new ArrayList<>();
+    private final List<String> coveragePageUrls = new ArrayList<>();
+    private final LinkedHashSet<String> coverageRestaurantUrls = new LinkedHashSet<>();
 
     private boolean autoMode = false;
+    private boolean coverageMode = false;
     private boolean discovering = false;
     private boolean waitingForRestaurantPage = false;
     private boolean cancelled = false;
@@ -73,6 +77,7 @@ public class MainActivity extends Activity {
     private int autoSuccess = 0;
     private int autoFailed = 0;
     private int autoProducts = 0;
+    private int coveragePageIndex = 0;
 
     private String pendingOfferName = null;
     private String pendingOfferUrl = null;
@@ -88,6 +93,7 @@ public class MainActivity extends Activity {
         locationButton = findViewById(R.id.locationButton);
         garimpoButton = findViewById(R.id.garimpoButton);
         autoScanButton = findViewById(R.id.autoScanButton);
+        coverageButton = findViewById(R.id.coverageButton);
         cancelScanButton = findViewById(R.id.cancelScanButton);
         scanOverlay = findViewById(R.id.scanOverlay);
         scanOverlayText = findViewById(R.id.scanOverlayText);
@@ -116,6 +122,14 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
+                if (coverageMode) {
+                    status.setText("Lendo página de cobertura...");
+                    handler.postDelayed(() -> {
+                        if (coverageMode && !cancelled) collectCoveragePage();
+                    }, 650);
+                    return;
+                }
+
                 if (autoMode && discovering && isCityPage(url)) {
                     status.setText("Descobrindo restaurantes 99Food em São Paulo...");
                     updateScanOverlay("Encontrando restaurantes perto da localização definida...");
@@ -174,11 +188,21 @@ public class MainActivity extends Activity {
         });
 
         autoScanButton.setOnClickListener(v -> {
+            if (coverageMode) return;
             if (autoMode) cancelAutoScan();
             else startAutoScan();
         });
 
-        cancelScanButton.setOnClickListener(v -> cancelAutoScan());
+        coverageButton.setOnClickListener(v -> {
+            if (autoMode) return;
+            if (coverageMode) cancelCoverageTest();
+            else startCoverageTest();
+        });
+
+        cancelScanButton.setOnClickListener(v -> {
+            if (coverageMode) cancelCoverageTest();
+            else cancelAutoScan();
+        });
 
         if (!handleIncomingOffer(getIntent())) {
             loadGarimpoFeed();
@@ -591,6 +615,7 @@ public class MainActivity extends Activity {
     private void setManualControlsEnabled(boolean enabled) {
         locationButton.setEnabled(enabled);
         garimpoButton.setEnabled(enabled);
+        coverageButton.setEnabled(enabled);
     }
 
     private void showScanOverlay(String message) {
@@ -612,6 +637,146 @@ public class MainActivity extends Activity {
 
     private void hideScanOverlay() {
         if (scanOverlay != null) scanOverlay.setVisibility(View.GONE);
+    }
+
+    private void startCoverageTest() {
+        coverageMode = true;
+        cancelled = false;
+        coveragePageIndex = 0;
+        coveragePageUrls.clear();
+        coverageRestaurantUrls.clear();
+
+        String[] categories = {"marmita", "lanches", "pizza"};
+        for (String category : categories) {
+            for (int page = 1; page <= 4; page++) {
+                coveragePageUrls.add(
+                        "https://99app.com/99food/sao-paulo/categoria/" +
+                        category + "/?page=" + page
+                );
+            }
+        }
+
+        locationButton.setEnabled(false);
+        garimpoButton.setEnabled(false);
+        autoScanButton.setEnabled(false);
+        coverageButton.setText("Cancelar teste");
+        showScanOverlay(
+                "Testando cobertura pública do 99Food...\n" +
+                "0 de " + coveragePageUrls.size() + " páginas"
+        );
+        loadNextCoveragePage();
+    }
+
+    private void loadNextCoveragePage() {
+        if (!coverageMode || cancelled) return;
+
+        if (coveragePageIndex >= coveragePageUrls.size()) {
+            finishCoverageTest();
+            return;
+        }
+
+        updateScanOverlay(
+                "Mapeando restaurantes...\n" +
+                (coveragePageIndex + 1) + " de " + coveragePageUrls.size() +
+                " páginas\n" +
+                coverageRestaurantUrls.size() + " restaurantes únicos encontrados"
+        );
+
+        webView.loadUrl(coveragePageUrls.get(coveragePageIndex));
+    }
+
+    private void collectCoveragePage() {
+        String script = """
+            (async function() {
+              const sleep = ms => new Promise(r => setTimeout(r, ms));
+              const found = new Set();
+
+              function collect() {
+                for (const a of Array.from(document.querySelectorAll('a[href]'))) {
+                  let u;
+                  try { u = new URL(a.href, location.href); } catch { continue; }
+
+                  if (u.hostname !== '99app.com' && u.hostname !== 'www.99app.com') continue;
+
+                  const p = u.pathname.replace(/\\/+/g, '/');
+                  const m = p.match(/^\\/99food\\/sao-paulo\\/([^/]+)\\/(\\d+)\\/?$/);
+                  if (!m) continue;
+
+                  found.add('https://99app.com' + (p.endsWith('/') ? p : p + '/'));
+                }
+              }
+
+              window.scrollTo(0, 0);
+              await sleep(160);
+              collect();
+
+              const scroller = document.scrollingElement || document.documentElement;
+              let stable = 0;
+              let previousCount = found.size;
+              let previousHeight = 0;
+
+              for (let i = 0; i < 12; i++) {
+                window.scrollBy(0, Math.max(650, window.innerHeight * 0.8));
+                await sleep(220);
+                collect();
+
+                const height = Math.max(
+                  scroller.scrollHeight || 0,
+                  document.body?.scrollHeight || 0
+                );
+                const atBottom =
+                  (window.scrollY || scroller.scrollTop || 0) + window.innerHeight >= height - 20;
+
+                if (found.size === previousCount &&
+                    Math.abs(height - previousHeight) < 8 &&
+                    atBottom) {
+                  stable++;
+                } else {
+                  stable = 0;
+                }
+
+                previousCount = found.size;
+                previousHeight = height;
+
+                if (stable >= 2) break;
+              }
+
+              GarimpoAndroid.reportCoverageLinks(
+                JSON.stringify(Array.from(found))
+              );
+            })();
+            """;
+
+        webView.evaluateJavascript(script, null);
+    }
+
+    private void finishCoverageTest() {
+        coverageMode = false;
+        coverageButton.setText("Testar cobertura");
+        autoScanButton.setEnabled(true);
+        locationButton.setEnabled(true);
+        garimpoButton.setEnabled(true);
+        hideScanOverlay();
+
+        int total = coverageRestaurantUrls.size();
+        status.setText(
+                "Teste concluído: " + total +
+                " restaurantes únicos em Marmita, Lanches e Pizza."
+        );
+    }
+
+    private void cancelCoverageTest() {
+        cancelled = true;
+        coverageMode = false;
+        coverageButton.setText("Testar cobertura");
+        autoScanButton.setEnabled(true);
+        locationButton.setEnabled(true);
+        garimpoButton.setEnabled(true);
+        hideScanOverlay();
+        status.setText(
+                "Teste interrompido: " + coverageRestaurantUrls.size() +
+                " restaurantes únicos encontrados."
+        );
     }
 
     private void startAutoScan() {
@@ -1015,6 +1180,49 @@ public class MainActivity extends Activity {
         }
 
         @JavascriptInterface
+        public void reportCoverageLinks(String payload) {
+            if (!coverageMode || cancelled) return;
+
+            try {
+                JSONArray links = new JSONArray(payload);
+                for (int i = 0; i < links.length(); i++) {
+                    String u = links.optString(i, "");
+                    if (u.matches("https://99app\\.com/99food/sao-paulo/[^/]+/\\d+/?")) {
+                        coverageRestaurantUrls.add(u);
+                    }
+                }
+
+                runOnUiThread(() -> {
+                    if (!coverageMode || cancelled) return;
+
+                    coveragePageIndex++;
+
+                    updateScanOverlay(
+                            "Mapeando restaurantes...\n" +
+                            coveragePageIndex + " de " + coveragePageUrls.size() +
+                            " páginas concluídas\n" +
+                            coverageRestaurantUrls.size() + " restaurantes únicos encontrados"
+                    );
+
+                    handler.postDelayed(
+                            MainActivity.this::loadNextCoveragePage,
+                            450
+                    );
+                });
+            } catch (Exception e) {
+                runOnUiThread(() -> {
+                    coverageMode = false;
+                    coverageButton.setText("Testar cobertura");
+                    autoScanButton.setEnabled(true);
+                    locationButton.setEnabled(true);
+                    garimpoButton.setEnabled(true);
+                    hideScanOverlay();
+                    status.setText("Falha no teste de cobertura: " + e.getMessage());
+                });
+            }
+        }
+
+        @JavascriptInterface
         public void reportRestaurantLinks(String payload) {
             if (!autoMode || cancelled) return;
 
@@ -1240,6 +1448,11 @@ public class MainActivity extends Activity {
 
     @Override
     public void onBackPressed() {
+        if (coverageMode) {
+            cancelCoverageTest();
+            return;
+        }
+
         if (autoMode) {
             cancelAutoScan();
             return;
