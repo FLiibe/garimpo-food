@@ -72,6 +72,7 @@ public class MainActivity extends Activity {
 
     private boolean autoMode = false;
     private boolean coverageMode = false;
+    private boolean directMenuTestRunning = false;
     private boolean discovering = false;
     private boolean waitingForRestaurantPage = false;
     private boolean cancelled = false;
@@ -128,10 +129,13 @@ public class MainActivity extends Activity {
 
             @Override
             public void onPageFinished(WebView view, String url) {
-                if (coverageMode) {
+                if (coverageMode && !directMenuTestRunning) {
                     status.setText("Lendo página de cobertura...");
                     handler.postDelayed(() -> {
-                        if (coverageMode && !cancelled) collectCoveragePage();
+                        if (coverageMode && !cancelled && !directMenuTestRunning &&
+                                coveragePageIndex < coveragePageUrls.size()) {
+                            collectCoveragePage();
+                        }
                     }, 650);
                     return;
                 }
@@ -652,6 +656,7 @@ public class MainActivity extends Activity {
         directMenuRead = 0;
         directMenuCheap = 0;
         directMenuFailed = 0;
+        directMenuTestRunning = false;
         coveragePageUrls.clear();
         coverageRestaurantUrls.clear();
 
@@ -760,10 +765,12 @@ public class MainActivity extends Activity {
     }
 
     private void finishCoverageTest() {
-        if (!coverageMode || cancelled) return;
+        if (!coverageMode || cancelled || directMenuTestRunning) return;
 
+        directMenuTestRunning = true;
         int total = coverageRestaurantUrls.size();
         if (total == 0) {
+            directMenuTestRunning = false;
             finishCatalogTest("Nenhum restaurante foi encontrado.");
             return;
         }
@@ -880,6 +887,7 @@ public class MainActivity extends Activity {
     }
 
     private void finishCatalogTest(String message) {
+        directMenuTestRunning = false;
         coverageMode = false;
         coverageButton.setText("Testar catálogo");
         autoScanButton.setEnabled(true);
@@ -891,6 +899,7 @@ public class MainActivity extends Activity {
 
     private void cancelCoverageTest() {
         cancelled = true;
+        directMenuTestRunning = false;
         coverageMode = false;
         coverageButton.setText("Testar catálogo");
         autoScanButton.setEnabled(true);
@@ -1306,7 +1315,7 @@ public class MainActivity extends Activity {
 
         @JavascriptInterface
         public void reportCoverageLinks(String payload) {
-            if (!coverageMode || cancelled) return;
+            if (!coverageMode || cancelled || directMenuTestRunning) return;
 
             try {
                 JSONArray links = new JSONArray(payload);
